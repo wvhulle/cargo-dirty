@@ -1,13 +1,17 @@
-use assert_cmd::Command;
+use assert_cmd::{cargo, prelude::*};
 use predicates::prelude::*;
-use std::fs;
+use std::fs::{self, remove_file};
+use std::process::Command;
 use tempfile::TempDir;
 
 fn create_test_project(name: &str) -> TempDir {
     let temp_dir = TempDir::new().unwrap();
     let cargo_toml = temp_dir.path().join("Cargo.toml");
 
-    fs::write(&cargo_toml, format!(r#"
+    fs::write(
+        &cargo_toml,
+        format!(
+            r#"
 [package]
 name = "{name}"
 version = "0.1.0"
@@ -15,20 +19,29 @@ edition = "2021"
 
 [build-dependencies]
 cc = "1.0"
-"#)).unwrap();
+"#
+        ),
+    )
+    .unwrap();
 
     let src_dir = temp_dir.path().join("src");
     fs::create_dir(&src_dir).unwrap();
 
     // Create a simple main.rs that uses dependencies
-    fs::write(src_dir.join("main.rs"), r#"
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"
 fn main() {
     println!("Hello, world!");
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Create a build script that checks environment variables
-    fs::write(temp_dir.path().join("build.rs"), r#"
+    fs::write(
+        temp_dir.path().join("build.rs"),
+        r#"
 use std::env;
 
 fn main() {
@@ -44,14 +57,20 @@ fn main() {
         .file("build_test.c")
         .compile("build_test");
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Create a simple C file for the build script
-    fs::write(temp_dir.path().join("build_test.c"), r"
+    fs::write(
+        temp_dir.path().join("build_test.c"),
+        r"
 int build_test_function(void) {
     return 42;
 }
-").unwrap();
+",
+    )
+    .unwrap();
 
     temp_dir
 }
@@ -62,8 +81,7 @@ fn detects_rebuilds_when_environment_variables_change() {
 
     // First build without custom env var
     let mut cmd1 = Command::new("cargo");
-    cmd1.arg("clean")
-        .current_dir(project.path());
+    cmd1.arg("clean").current_dir(project.path());
     cmd1.assert().success();
 
     let mut cmd2 = Command::new("cargo");
@@ -73,10 +91,12 @@ fn detects_rebuilds_when_environment_variables_change() {
     let _ = cmd2.assert(); // May fail due to missing dependencies, but that's ok
 
     // Now test cargo-dirty with environment variable change
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build")
+        .arg("--command")
+        .arg("build")
         .env("CUSTOM_VAR", "test_value");
 
     cmd.assert()
@@ -102,10 +122,12 @@ fn detects_rebuilds_when_c_compiler_environment_changes() {
     let _ = cmd2.assert(); // May fail, but we want the fingerprint
 
     // Now test cargo-dirty with different CC
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build")
+        .arg("--command")
+        .arg("build")
         .env("CC", "clang");
 
     cmd.assert()
@@ -119,16 +141,20 @@ fn detects_rebuilds_when_source_files_are_modified() {
     let project = create_test_project("target-test");
 
     // Remove the build script for this test to avoid C compilation issues
-    let _ = std::fs::remove_file(project.path().join("build.rs"));
+    let _ = remove_file(project.path().join("build.rs"));
 
     // Update Cargo.toml to remove build dependencies
     let cargo_toml = project.path().join("Cargo.toml");
-    fs::write(&cargo_toml, r#"
+    fs::write(
+        &cargo_toml,
+        r#"
 [package]
 name = "target-test"
 version = "0.1.0"
 edition = "2021"
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // First build in debug mode
     let mut cmd1 = Command::new("cargo");
@@ -137,17 +163,23 @@ edition = "2021"
 
     // Now modify a source file to force a rebuild, then test with different profile
     let src_file = project.path().join("src/main.rs");
-    fs::write(&src_file, r#"
+    fs::write(
+        &src_file,
+        r#"
 fn main() {
     println!("Hello, modified world!");
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Test cargo-dirty with the same debug build - should detect file changes
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build");
+        .arg("--command")
+        .arg("build");
 
     cmd.assert()
         .success()
@@ -166,7 +198,9 @@ fn detects_rebuilds_when_dependency_configuration_changes() {
 
     // Modify Cargo.toml to change dependencies
     let cargo_toml = project.path().join("Cargo.toml");
-    fs::write(&cargo_toml, r#"
+    fs::write(
+        &cargo_toml,
+        r#"
 [package]
 name = "dep-test"
 version = "0.1.0"
@@ -178,13 +212,17 @@ serde = "1.0"
 
 [build-dependencies]
 cc = "1.0"
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Test cargo-dirty after dependency change
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build");
+        .arg("--command")
+        .arg("build");
 
     cmd.assert()
         .success()
@@ -202,7 +240,9 @@ fn detects_rebuilds_when_rust_source_files_change() {
 
     // Modify source file
     let src_file = project.path().join("src").join("main.rs");
-    fs::write(&src_file, r#"
+    fs::write(
+        &src_file,
+        r#"
 use log::info;
 
 fn main() {
@@ -210,13 +250,17 @@ fn main() {
     info!("Hello, modified world!");
     println!("This is a change");
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     // Test cargo-dirty after file change
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build");
+        .arg("--command")
+        .arg("build");
 
     cmd.assert()
         .success()
@@ -228,10 +272,12 @@ fn handles_multiple_environment_variable_changes() {
     let project = create_test_project("multi-env-test");
 
     // Test with multiple environment variables that affect builds
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build")
+        .arg("--command")
+        .arg("build")
         .env("RUSTFLAGS", "-C target-cpu=native")
         .env("CARGO_TARGET_DIR", project.path().join("custom_target"))
         .env("CC", "gcc-12")
@@ -252,10 +298,12 @@ fn reports_no_rebuild_reasons_for_clean_incremental_build() {
     let _ = cmd1.assert();
 
     // Second build should be incremental
-    let mut cmd = Command::cargo_bin("cargo-dirty").unwrap();
-    cmd.arg("--path").arg(project.path())
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
         .arg("--verbose")
-        .arg("--command").arg("build");
+        .arg("--command")
+        .arg("build");
 
     cmd.assert()
         .success()
@@ -274,5 +322,4 @@ fn formats_rebuild_reason_explanations_with_suggestions() {
     assert!(explanation.contains("🔧 ENVIRONMENT VARIABLE"));
     assert!(explanation.contains("RUSTFLAGS"));
     assert!(explanation.contains("💡 Suggestion"));
-    assert!(explanation.contains("compiler flags"));
 }

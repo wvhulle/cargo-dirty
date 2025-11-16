@@ -1,6 +1,8 @@
 use cargo_dirty::analyze_dirty_reasons;
 use clap::Parser;
 use log::info;
+use std::env;
+use std::error::Error;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -16,10 +18,10 @@ struct Args {
     command: String,
 
     #[arg(help = "Additional arguments to pass to cargo", last = true)]
-    args: Vec<String>,
+    cargo: Vec<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     if args.verbose {
@@ -30,14 +32,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env_logger::init();
     }
 
-    let project_path = args.path.unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
+    let project_path = args
+        .path
+        .unwrap_or_else(|| env::current_dir().expect("Failed to get current directory"));
 
-    info!("Analyzing cargo project at: {project_path:?}");
+    info!("Analyzing cargo project at: {}", project_path.display());
 
-    let full_command = if args.args.is_empty() {
+    let full_command = if args.cargo.is_empty() {
         args.command
     } else {
-        format!("{} {}", args.command, args.args.join(" "))
+        format!("{} {}", args.command, args.cargo.join(" "))
     };
 
     analyze_dirty_reasons(&project_path, &full_command)

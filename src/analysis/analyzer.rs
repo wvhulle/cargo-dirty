@@ -1,19 +1,31 @@
 use log::{debug, info};
+use std::error::Error;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{ChildStderr, Command, Stdio};
 
-use crate::parsing::parse_rebuild_reason;
 use super::reporter::print_rebuild_analysis;
+use crate::parsing::parse_rebuild_reason;
 
-pub fn analyze_dirty_reasons(project_path: &PathBuf, cargo_command: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Analyzes dirty reasons for cargo rebuilds
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Cargo.toml is not found at the project path
+/// - The cargo command fails to spawn
+/// - Log analysis fails
+pub fn analyze_dirty_reasons(
+    project_path: &PathBuf,
+    cargo_command: &str,
+) -> Result<(), Box<dyn Error>> {
     // Check if Cargo.toml exists
     let cargo_toml = project_path.join("Cargo.toml");
     if !cargo_toml.exists() {
-        return Err(format!("Cargo.toml not found at {cargo_toml:?}").into());
+        return Err(format!("Cargo.toml not found at {}", cargo_toml.display()).into());
     }
 
-    info!("Found Cargo project at: {project_path:?}");
+    info!("Found Cargo project at: {}", project_path.display());
     info!("Running cargo {cargo_command} with fingerprint logging...");
 
     let args: Vec<&str> = cargo_command.split_whitespace().collect();
@@ -37,7 +49,12 @@ pub fn analyze_dirty_reasons(project_path: &PathBuf, cargo_command: &str) -> Res
     Ok(())
 }
 
-pub fn analyze_cargo_logs(reader: BufReader<std::process::ChildStderr>) -> Result<(), Box<dyn std::error::Error>> {
+/// Analyzes cargo log output for rebuild reasons
+///
+/// # Errors
+///
+/// Returns an error if reading from the stderr stream fails
+pub fn analyze_cargo_logs(reader: BufReader<ChildStderr>) -> Result<(), Box<dyn Error>> {
     let mut rebuild_reasons = Vec::new();
 
     for line in reader.lines() {
@@ -57,7 +74,9 @@ pub fn analyze_cargo_logs(reader: BufReader<std::process::ChildStderr>) -> Resul
     }
 
     if rebuild_reasons.is_empty() {
-        info!("🎉 No rebuild reasons detected - this suggests an incremental build with no changes!");
+        info!(
+            "🎉 No rebuild reasons detected - this suggests an incremental build with no changes!"
+        );
         info!("💡 This is good! It means cargo's incremental compilation is working effectively.");
     } else {
         print_rebuild_analysis(&rebuild_reasons);

@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter, Result as FmtResult};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RebuildReason {
     EnvVarChanged {
@@ -34,95 +36,253 @@ pub struct DependencyChangeContext {
     pub root_cause: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ExplanationParts {
+    icon: &'static str,
+    title: &'static str,
+    details: String,
+    suggestions: Vec<String>,
+    context_lines: Vec<String>,
+}
+
+impl ExplanationParts {
+    const fn new(icon: &'static str, title: &'static str) -> Self {
+        Self {
+            icon,
+            title,
+            details: String::new(),
+            suggestions: Vec::new(),
+            context_lines: Vec::new(),
+        }
+    }
+
+    fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = details.into();
+        self
+    }
+
+    fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestions.push(suggestion.into());
+        self
+    }
+
+    fn with_suggestions(
+        mut self,
+        suggestions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.suggestions
+            .extend(suggestions.into_iter().map(Into::into));
+        self
+    }
+
+    fn with_context(mut self, label: &str, value: &str) -> Self {
+        self.context_lines.push(format!("   {label}: {value}"));
+        self
+    }
+
+    fn build(self) -> String {
+        let mut lines = vec![format!("{} {}: {}", self.icon, self.title, self.details)];
+
+        if !self.suggestions.is_empty() {
+            lines.push("   💡 Suggestions:".to_string());
+            lines.extend(self.suggestions.into_iter().map(|s| format!("      • {s}")));
+        }
+
+        lines.extend(self.context_lines);
+        lines.join("\n")
+    }
+}
+
 impl RebuildReason {
     #[must_use]
     pub fn explanation(&self) -> String {
         match self {
-            Self::EnvVarChanged { name, old_value, new_value } => {
-                let change_desc = match (old_value, new_value) {
-                    (Some(old), Some(new)) => format!("changed from '{old}' to '{new}'"),
-                    (Some(old), None) => format!("was unset (was '{old}')"),
-                    (None, Some(new)) => format!("was set to '{new}'"),
-                    (None, None) => "changed (both old and new values are None)".to_string(),
-                };
-
-                let suggestion = match name.as_str() {
-                    "CC" | "CXX" => "This usually happens when switching between development environments (e.g., nix-shell, different toolchains). Ensure consistent compiler environment.",
-                    "CARGO_TARGET_DIR" => "Target directory location changed. Use consistent CARGO_TARGET_DIR or avoid setting it.",
-                    "RUSTFLAGS" | "RUSTC_FLAGS" => "Rust compiler flags changed. Ensure consistent build flags across builds.",
-                    "PATH" => "PATH environment variable changed, affecting which tools cargo finds. Ensure consistent PATH.",
-                    _ if name.starts_with("CARGO_") => "Cargo-specific environment variable changed. Check your cargo configuration.",
-                    _ => "Environment variable affects build process. Ensure consistent environment between builds.",
-                };
-
-                format!("🔧 ENVIRONMENT VARIABLE: '{name}' {change_desc}\n   💡 Suggestion: {suggestion}")
-            }
+            Self::EnvVarChanged {
+                name,
+                old_value,
+                new_value,
+            } => Self::explain_env_var_change(name, old_value.as_ref(), new_value.as_ref()),
             Self::UnitDependencyInfoChanged { name, context, .. } => {
-                let base_suggestion = match name.as_str() {
-                    s if s.contains("build_script") => "Build script output changed. This often happens when:\n      • Build script dependencies were updated\n      • Environment variables affecting the build script changed\n      • System dependencies (like C libraries) were updated",
-                    s if s.ends_with("-sys") => "System library binding changed. This often means:\n      • The underlying C library was updated\n      • Library detection logic found different versions\n      • pkg-config or cmake output changed",
-                    _ => "Dependency was rebuilt, causing this crate to rebuild. Common causes:\n      • Dependency source code changed\n      • Dependency's own dependencies changed\n      • Build flags or features changed for the dependency",
-                };
+                Self::explain_dependency_change(name, context.as_ref())
+            }
+            Self::RustflagsChanged { old, new } => Self::explain_rustflags_change(old, new),
+            Self::FeaturesChanged { old, new } => Self::explain_features_change(old, new),
+            Self::ProfileConfigurationChanged => Self::explain_profile_configuration_change(),
+            Self::TargetConfigurationChanged => Self::explain_target_configuration_change(),
+            Self::FileChanged { path } => Self::explain_file_change(path),
+            Self::Unknown(msg) => Self::explain_unknown_reason(msg),
+        }
+    }
 
-                let mut explanation = format!("📦 DEPENDENCY: '{name}' was rebuilt\n   💡 Why this happens: {base_suggestion}");
+    fn explain_env_var_change(
+        name: &str,
+        old_value: Option<&String>,
+        new_value: Option<&String>,
+    ) -> String {
+        let change_desc = match (old_value, new_value) {
+            (Some(old), Some(new)) => format!("changed from '{old}' to '{new}'"),
+            (Some(old), None) => format!("was unset (was '{old}')"),
+            (None, Some(new)) => format!("was set to '{new}'"),
+            (None, None) => "changed (both old and new values are None)".to_string(),
+        };
 
-                if let Some(ctx) = context {
-                    if let Some(root_cause) = &ctx.root_cause {
-                        explanation.push_str(&format!("\n   🔍 Root cause: {root_cause}"));
-                    }
-                    if let Some(package_id) = &ctx.package_id {
-                        explanation.push_str(&format!("\n   📋 Package: {package_id}"));
-                    }
-                    if let Some(target_type) = &ctx.target_type {
-                        explanation.push_str(&format!("\n   🎯 Target: {target_type}"));
-                    }
-                }
+        let suggestions = match name {
+            "CC" | "CXX" => vec![
+                "Ensure consistent compiler environment across builds",
+                "This usually happens when switching between development environments",
+                "Consider using direnv or similar tools to manage environment",
+            ],
+            "CARGO_TARGET_DIR" => vec![
+                "Use consistent CARGO_TARGET_DIR or avoid setting it",
+                "Consider using a fixed location for target directory",
+            ],
+            "RUSTFLAGS" | "RUSTC_FLAGS" => vec![
+                "Ensure consistent build flags across builds",
+                "Consider using cargo profiles instead of environment variables",
+            ],
+            "PATH" => vec![
+                "Ensure consistent PATH across builds",
+                "Check if new tools were added/removed from PATH",
+            ],
+            name if name.starts_with("CARGO_") => vec![
+                "Check your cargo configuration",
+                "Ensure consistent cargo environment variables",
+            ],
+            _ => vec!["Ensure consistent environment between builds"],
+        };
 
-                explanation
-            }
-            Self::RustflagsChanged { old, new } => {
-                let old_flags = if old.is_empty() { "(none)".to_string() } else { old.join(" ") };
-                let new_flags = if new.is_empty() { "(none)".to_string() } else { new.join(" ") };
+        ExplanationParts::new("🔧", "ENVIRONMENT VARIABLE")
+            .with_details(format!("'{name}' {change_desc}"))
+            .with_suggestions(suggestions)
+            .build()
+    }
 
-                format!(
-                    "🚩 RUSTFLAGS CHANGED: {} → {}\n   💡 Common causes:\n      • Different development environments (nix-shell, different toolchains)\n      • Changed compiler optimization settings\n      • Added/removed debugging flags\n      • Modified target-specific compilation flags\n   💡 Suggestion: Use consistent RUSTFLAGS across builds or use cargo profiles",
-                    old_flags, new_flags
-                )
-            }
-            Self::FeaturesChanged { old, new } => {
-                format!(
-                    "🔧 FEATURES CHANGED: '{}' → '{}'\n   💡 Common causes:\n      • Different cargo commands (e.g., --features vs --all-features)\n      • Workspace vs individual package builds with different default features\n      • Changed feature selection in Cargo.toml dependencies\n   💡 Suggestion: Use consistent feature flags or expect rebuilds when changing features",
-                    old, new
-                )
-            }
-            Self::ProfileConfigurationChanged => {
-                "📊 PROFILE CONFIGURATION: Build profile settings changed\n   💡 Common causes:\n      • Changed [profile.dev] or [profile.release] settings in Cargo.toml\n      • Modified optimization levels, debug info, or LTO settings\n      • Updated codegen-units or incremental compilation settings\n   💡 Suggestion: Keep profile configurations consistent or expect rebuilds when changing them".to_string()
-            }
-            Self::TargetConfigurationChanged => {
-                "⚙️  TARGET CONFIGURATION: Build target settings changed\n   💡 Common causes:\n      • Switched between debug/release mode\n      • Changed optimization level or debug settings\n      • Modified target architecture or features\n      • Updated Cargo.toml [profile] settings\n   💡 Suggestion: Use consistent build profiles or expect rebuilds when switching".to_string()
-            }
-            Self::FileChanged { path } => {
-                let suggestion = if path.contains("Cargo.toml") || path.contains("Cargo.lock") {
-                    "Project configuration changed. This triggers rebuilds of affected crates."
-                } else if path.contains(".rs") {
-                    "Source file was modified. This is expected when code changes."
-                } else if path.contains("build.rs") {
-                    "Build script changed. This often triggers rebuilds of multiple crates."
-                } else {
-                    "A file that affects the build process was modified."
-                };
+    fn explain_dependency_change(name: &str, context: Option<&DependencyChangeContext>) -> String {
+        let suggestions = match name {
+            s if s.contains("build_script") => vec![
+                "Build script dependencies were updated",
+                "Environment variables affecting the build script changed",
+                "System dependencies (like C libraries) were updated",
+            ],
+            s if s.ends_with("-sys") => vec![
+                "The underlying C library was updated",
+                "Library detection logic found different versions",
+                "pkg-config or cmake output changed",
+            ],
+            _ => vec![
+                "Dependency source code changed",
+                "Dependency's own dependencies changed",
+                "Build flags or features changed for the dependency",
+            ],
+        };
 
-                format!("📝 FILE CHANGED: {path}\n   💡 Explanation: {suggestion}")
+        let mut parts = ExplanationParts::new("📦", "DEPENDENCY")
+            .with_details(format!("'{name}' was rebuilt"))
+            .with_suggestions(suggestions);
+
+        if let Some(ctx) = context {
+            if let Some(root_cause) = &ctx.root_cause {
+                parts = parts.with_context("🔍 Root cause", root_cause);
             }
-            Self::Unknown(msg) => {
-                format!("❓ UNKNOWN REBUILD REASON: {}\n   💡 This might be a new type of rebuild trigger. Consider reporting this for analysis.", msg.trim())
+            if let Some(package_id) = &ctx.package_id {
+                parts = parts.with_context("📋 Package", package_id);
+            }
+            if let Some(target_type) = &ctx.target_type {
+                parts = parts.with_context("🎯 Target", target_type);
             }
         }
+
+        parts.build()
+    }
+
+    fn explain_rustflags_change(old: &[String], new: &[String]) -> String {
+        let old_flags = if old.is_empty() {
+            "(none)"
+        } else {
+            &old.join(" ")
+        };
+        let new_flags = if new.is_empty() {
+            "(none)"
+        } else {
+            &new.join(" ")
+        };
+
+        ExplanationParts::new("🚩", "RUSTFLAGS CHANGED")
+            .with_details(format!("{old_flags} → {new_flags}"))
+            .with_suggestions([
+                "Different development environments (nix-shell, different toolchains)",
+                "Changed compiler optimization settings",
+                "Added/removed debugging flags",
+                "Modified target-specific compilation flags",
+                "Use consistent RUSTFLAGS across builds or use cargo profiles",
+            ])
+            .build()
+    }
+
+    fn explain_features_change(old: &str, new: &str) -> String {
+        ExplanationParts::new("🔧", "FEATURES CHANGED")
+            .with_details(format!("'{old}' → '{new}'"))
+            .with_suggestions([
+                "Different cargo commands (e.g., --features vs --all-features)",
+                "Workspace vs individual package builds with different default features",
+                "Changed feature selection in Cargo.toml dependencies",
+                "Use consistent feature flags or expect rebuilds when changing features",
+            ])
+            .build()
+    }
+
+    fn explain_profile_configuration_change() -> String {
+        ExplanationParts::new("📊", "PROFILE CONFIGURATION")
+            .with_details("Build profile settings changed")
+            .with_suggestions([
+                "Changed [profile.dev] or [profile.release] settings in Cargo.toml",
+                "Modified optimization levels, debug info, or LTO settings",
+                "Updated codegen-units or incremental compilation settings",
+                "Keep profile configurations consistent or expect rebuilds when changing them",
+            ])
+            .build()
+    }
+
+    fn explain_target_configuration_change() -> String {
+        ExplanationParts::new("⚙️ ", "TARGET CONFIGURATION")
+            .with_details("Build target settings changed")
+            .with_suggestions([
+                "Switched between debug/release mode",
+                "Changed optimization level or debug settings",
+                "Modified target architecture or features",
+                "Updated Cargo.toml [profile] settings",
+                "Use consistent build profiles or expect rebuilds when switching",
+            ])
+            .build()
+    }
+
+    fn explain_file_change(path: &str) -> String {
+        let suggestion = if path.contains("Cargo.toml") || path.contains("Cargo.lock") {
+            "Project configuration changed. This triggers rebuilds of affected crates."
+        } else if path.contains(".rs") {
+            "Source file was modified. This is expected when code changes."
+        } else if path.contains("build.rs") {
+            "Build script changed. This often triggers rebuilds of multiple crates."
+        } else {
+            "A file that affects the build process was modified."
+        };
+
+        ExplanationParts::new("📝", "FILE CHANGED")
+            .with_details(path.to_string())
+            .with_suggestion(suggestion)
+            .build()
+    }
+
+    fn explain_unknown_reason(msg: &str) -> String {
+        ExplanationParts::new("❓", "UNKNOWN REBUILD REASON")
+            .with_details(msg.trim().to_string())
+            .with_suggestion("This might be a new type of rebuild trigger. Consider reporting this for analysis.")
+            .build()
     }
 }
 
-impl std::fmt::Display for RebuildReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for RebuildReason {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.explanation())
     }
 }
@@ -153,14 +313,21 @@ mod tests {
         assert!(dep_change.to_string().contains("rusqlite"));
 
         let target_change = RebuildReason::TargetConfigurationChanged;
-        assert!(target_change.to_string().contains("⚙️  TARGET CONFIGURATION"));
+        assert!(target_change
+            .to_string()
+            .contains("⚙️  TARGET CONFIGURATION"));
     }
 
     #[test]
     fn test_enhanced_explanations() {
         let rustflags_change = RebuildReason::RustflagsChanged {
             old: vec!["--cfg".to_string(), "test".to_string()],
-            new: vec!["--cfg".to_string(), "test".to_string(), "-C".to_string(), "target-cpu=native".to_string()],
+            new: vec![
+                "--cfg".to_string(),
+                "test".to_string(),
+                "-C".to_string(),
+                "target-cpu=native".to_string(),
+            ],
         };
 
         let explanation = rustflags_change.explanation();

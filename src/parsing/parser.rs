@@ -62,12 +62,12 @@ fn parse_env_var_changed(input: &str) -> IResult<&str, RebuildReason> {
     // Parse name: "value"
     let (input, _) = tuple((tag("name"), space0, char(':'), space0))(input)?;
     let (input, name) = parse_quoted_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse old_value: Option<String>
     let (input, _) = tuple((tag("old_value"), space0, char(':'), space0))(input)?;
     let (input, old_value) = parse_option_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse new_value: Option<String>
     let (input, _) = tuple((tag("new_value"), space0, char(':'), space0))(input)?;
@@ -93,17 +93,17 @@ fn parse_unit_dependency_info_changed(input: &str) -> IResult<&str, RebuildReaso
     // Parse old_name: "value"
     let (input, _) = tuple((tag("old_name"), space0, char(':'), space0))(input)?;
     let (input, old_name) = parse_quoted_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse old_fingerprint: number
     let (input, _) = tuple((tag("old_fingerprint"), space0, char(':'), space0))(input)?;
     let (input, old_fingerprint) = parse_number(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse new_name: "value" (but we don't need to store it)
     let (input, _) = tuple((tag("new_name"), space0, char(':'), space0))(input)?;
     let (input, _) = parse_quoted_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse new_fingerprint: number
     let (input, _) = tuple((tag("new_fingerprint"), space0, char(':'), space0))(input)?;
@@ -136,7 +136,7 @@ fn parse_file_time(input: &str) -> IResult<&str, (String, String)> {
     // Parse seconds: number
     let (input, _) = tuple((tag("seconds"), space0, char(':'), space0))(input)?;
     let (input, seconds) = parse_number(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Parse nanos: number
     let (input, _) = tuple((tag("nanos"), space0, char(':'), space0))(input)?;
@@ -155,17 +155,17 @@ fn parse_changed_file(input: &str) -> IResult<&str, String> {
     // Skip reference field
     let (input, _) = tuple((tag("reference"), space0, char(':'), space0))(input)?;
     let (input, _) = parse_quoted_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Skip reference_mtime field
     let (input, _) = tuple((tag("reference_mtime"), space0, char(':'), space0))(input)?;
     let (input, _) = parse_file_time(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Extract stale path
     let (input, _) = tuple((tag("stale"), space0, char(':'), space0))(input)?;
     let (input, stale_path) = parse_quoted_string(input)?;
-    let (input, _) = parse_comma(input)?;
+    let (input, ()) = parse_comma(input)?;
 
     // Skip stale_mtime field
     let (input, _) = tuple((tag("stale_mtime"), space0, char(':'), space0))(input)?;
@@ -203,18 +203,17 @@ fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
 }
 
 // Parse the full "dirty: <reason>" pattern
+#[must_use]
 pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
     // Find the "dirty:" part in the log line
-    if let Some(dirty_start) = input.find("dirty:") {
+    input.find("dirty:").and_then(|dirty_start| {
         let dirty_content = &input[dirty_start + 6..].trim_start();
 
         match parse_dirty_reason_content(dirty_content) {
             Ok((_, reason)) => Some(reason),
             Err(_) => None,
         }
-    } else {
-        None
-    }
+    })
 }
 
 #[cfg(test)]
