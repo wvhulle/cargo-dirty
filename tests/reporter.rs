@@ -1,4 +1,4 @@
-use cargo_dirty::{RebuildReason, parsing::DependencyChangeContext};
+use cargo_dirty::{parsing::DependencyChangeContext, RebuildReason};
 
 #[test]
 fn rebuild_reason_displays_environment_variable_changes() {

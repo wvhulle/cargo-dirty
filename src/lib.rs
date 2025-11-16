@@ -7,4 +7,4 @@ pub mod analysis;
 pub mod parsing;
 
 pub use analysis::analyze_dirty_reasons;
-pub use parsing::{RebuildReason, parse_rebuild_reason};
+pub use parsing::{parse_rebuild_reason, RebuildReason};

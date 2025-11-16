@@ -4,12 +4,12 @@
 //! fingerprint log output and extract structured rebuild reasons.
 
 use nom::{
-    IResult,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{char, digit1, space0},
     combinator::map,
     sequence::{delimited, preceded, terminated, tuple},
+    IResult,
 };
 
 use super::RebuildReason;

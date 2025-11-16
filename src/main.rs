@@ -21,7 +21,13 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
+    // When called as `cargo dirty`, cargo passes "dirty" as the first argument
+    // We need to skip it to make clap work correctly
+    let args = if env::args().nth(1).as_deref() == Some("dirty") {
+        Args::parse_from(env::args().take(1).chain(env::args().skip(2)))
+    } else {
+        Args::parse()
+    };
 
     if args.verbose {
         env_logger::Builder::from_default_env()
