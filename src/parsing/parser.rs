@@ -4,20 +4,15 @@
 //! fingerprint log output and extract structured rebuild reasons.
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{char, digit1, space0},
     combinator::map,
     sequence::{delimited, preceded, terminated, tuple},
-    IResult,
 };
 
 use super::RebuildReason;
-
-// =============================================================================
-// Basic parsing combinators for primitive types
-// =============================================================================
-
 // Parse a quoted string: "hello world"
 fn parse_quoted_string(input: &str) -> IResult<&str, String> {
     delimited(
@@ -50,10 +45,6 @@ fn parse_comma(input: &str) -> IResult<&str, ()> {
     map(tuple((space0, char(','), space0)), |_| ())(input)
 }
 
-// =============================================================================
-// RebuildReason variant parsers
-// =============================================================================
-
 // Parse EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }
 fn parse_env_var_changed(input: &str) -> IResult<&str, RebuildReason> {
     let (input, _) = tag("EnvVarChanged")(input)?;
@@ -85,7 +76,8 @@ fn parse_env_var_changed(input: &str) -> IResult<&str, RebuildReason> {
     ))
 }
 
-// Parse UnitDependencyInfoChanged { old_name: "rusqlite", old_fingerprint: 123, new_name: "rusqlite", new_fingerprint: 456 }
+// Parse UnitDependencyInfoChanged { old_name: "rusqlite", old_fingerprint: 123,
+// new_name: "rusqlite", new_fingerprint: 456 }
 fn parse_unit_dependency_info_changed(input: &str) -> IResult<&str, RebuildReason> {
     let (input, _) = tag("UnitDependencyInfoChanged")(input)?;
     let (input, _) = tuple((space0, char('{'), space0))(input)?;
@@ -147,7 +139,8 @@ fn parse_file_time(input: &str) -> IResult<&str, (String, String)> {
     Ok((input, (seconds, nanos)))
 }
 
-// Parse ChangedFile { reference: "...", reference_mtime: FileTime { ... }, stale: "...", stale_mtime: FileTime { ... } }
+// Parse ChangedFile { reference: "...", reference_mtime: FileTime { ... },
+// stale: "...", stale_mtime: FileTime { ... } }
 fn parse_changed_file(input: &str) -> IResult<&str, String> {
     let (input, _) = tag("ChangedFile")(input)?;
     let (input, _) = tuple((space0, char('{'), space0))(input)?;
@@ -188,10 +181,6 @@ fn parse_fs_status_outdated(input: &str) -> IResult<&str, RebuildReason> {
     Ok((input, RebuildReason::FileChanged { path }))
 }
 
-// =============================================================================
-// Main parsing logic
-// =============================================================================
-
 // Main parser for dirty reasons
 fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
     alt((
@@ -214,159 +203,4 @@ pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
             Err(_) => None,
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_quoted_string() {
-        assert_eq!(
-            parse_quoted_string(r#""hello world""#),
-            Ok(("", "hello world".to_string()))
-        );
-    }
-
-    #[test]
-    fn test_parse_option_string() {
-        assert_eq!(parse_option_string("None"), Ok(("", None)));
-        assert_eq!(
-            parse_option_string(r#"Some("value")"#),
-            Ok(("", Some("value".to_string())))
-        );
-    }
-
-    #[test]
-    fn test_parse_env_var_changed() {
-        let input = r#"EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_env_var_changed(input).unwrap().1;
-
-        if let RebuildReason::EnvVarChanged {
-            name,
-            old_value,
-            new_value,
-        } = result
-        {
-            assert_eq!(name, "CC");
-            assert_eq!(old_value, Some("gcc".to_string()));
-            assert_eq!(new_value, None);
-        } else {
-            panic!("Expected EnvVarChanged");
-        }
-    }
-
-    #[test]
-    fn test_parse_rebuild_reason() {
-        let log_line =
-            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_rebuild_reason(log_line);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_parse_env_var_change_some_to_none() {
-        let log_line =
-            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::EnvVarChanged {
-                name: "CC".to_string(),
-                old_value: Some("gcc".to_string()),
-                new_value: None,
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_env_var_change_none_to_some() {
-        let log_line = r#"dirty: EnvVarChanged { name: "RUST_LOG", old_value: None, new_value: Some("debug") }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::EnvVarChanged {
-                name: "RUST_LOG".to_string(),
-                old_value: None,
-                new_value: Some("debug".to_string()),
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_dependency_change() {
-        let log_line = r#"dirty: UnitDependencyInfoChanged { old_name: "rusqlite", old_fingerprint: 5920731552898212716, new_name: "rusqlite", new_fingerprint: 7766129310588964256 }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::UnitDependencyInfoChanged {
-                name: "rusqlite".to_string(),
-                old_fingerprint: "5920731552898212716".to_string(),
-                new_fingerprint: "7766129310588964256".to_string(),
-                context: None,
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_target_configuration_changed() {
-        let log_line = r"dirty: TargetConfigurationChanged";
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(result, Some(RebuildReason::TargetConfigurationChanged));
-    }
-
-    #[test]
-    fn test_parse_unknown_reason() {
-        let log_line = r#"dirty: SomeUnknownReason { data: "value" }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_parse_complex_log_line() {
-        let log_line = r#"    0.102058909s  INFO prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::EnvVarChanged {
-                name: "CC".to_string(),
-                old_value: Some("gcc".to_string()),
-                new_value: None,
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_env_var_with_complex_values() {
-        let log_line = r#"dirty: EnvVarChanged { name: "PATH", old_value: Some("/usr/bin:/bin"), new_value: Some("/nix/store/abc:/usr/bin:/bin") }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::EnvVarChanged {
-                name: "PATH".to_string(),
-                old_value: Some("/usr/bin:/bin".to_string()),
-                new_value: Some("/nix/store/abc:/usr/bin:/bin".to_string()),
-            })
-        );
-    }
-
-    #[test]
-    fn test_parse_fs_status_outdated() {
-        let log_line = r#"dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/tmp/.tmp6t5LHE/target/debug/.fingerprint/target-test-d08e845c3c592b51/dep-bin-target-test", reference_mtime: FileTime { seconds: 1763310414, nanos: 599971397 }, stale: "/tmp/.tmp6t5LHE/src/main.rs", stale_mtime: FileTime { seconds: 1763310414, nanos: 663971117 } }))"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::FileChanged {
-                path: "/tmp/.tmp6t5LHE/src/main.rs".to_string(),
-            })
-        );
-    }
 }

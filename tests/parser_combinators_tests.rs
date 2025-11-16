@@ -1,4 +1,4 @@
-use cargo_dirty::{parse_rebuild_reason, RebuildReason};
+use cargo_dirty::{RebuildReason, parse_rebuild_reason};
 
 #[test]
 fn nom_parser_handles_env_var_changed_with_some_to_none() {
@@ -124,7 +124,7 @@ fn nom_parser_returns_none_for_lines_without_dirty_marker() {
 fn nom_parser_handles_malformed_input_gracefully() {
     let malformed_lines = vec![
         r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc")"#, // Missing closing brace
-        r#"dirty: EnvVarChanged { name: CC", old_value: Some("gcc"), new_value: None }"#, // Missing quote
+        r#"dirty: EnvVarChanged { name: CC", old_value: Some("gcc"), new_value: None }"#, /* Missing quote */
         r#"dirty: UnitDependencyInfoChanged { old_name: "rusqlite""#, // Incomplete
         r"dirty:",                                                    // Just the marker
         r"",                                                          // Empty string

@@ -1,7 +1,7 @@
+use std::{fs, process::Command};
+
 use assert_cmd::{cargo, prelude::*};
 use predicates::prelude::*;
-use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 #[test]
@@ -73,7 +73,7 @@ edition = "2021"
 
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("Found Cargo project at"));
+        .stderr(predicate::str::contains("Analyzing:"));
 }
 
 #[test]
@@ -106,7 +106,7 @@ edition = "2021"
         cmd.assert()
             .success()
             .stderr(predicate::str::contains(format!(
-                "Running cargo {command} with fingerprint"
+                "Running: cargo {command}"
             )));
     }
 }
@@ -114,7 +114,7 @@ edition = "2021"
 #[test]
 fn parser_correctly_extracts_rebuild_reasons_from_cargo_logs() {
     // Test that we can parse real cargo log output
-    use cargo_dirty::{parse_rebuild_reason, RebuildReason};
+    use cargo_dirty::{RebuildReason, parse_rebuild_reason};
 
     let sample_logs = vec![
         r#"    0.102058909s  INFO prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#,

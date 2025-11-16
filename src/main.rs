@@ -1,9 +1,8 @@
+use std::{env, error::Error, path::PathBuf};
+
 use cargo_dirty::analyze_dirty_reasons;
 use clap::Parser;
 use log::info;
-use std::env;
-use std::error::Error;
-use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Analyze what causes cargo rebuilds", long_about = None)]

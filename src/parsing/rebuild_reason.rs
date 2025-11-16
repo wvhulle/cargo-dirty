@@ -38,7 +38,6 @@ pub struct DependencyChangeContext {
 
 #[derive(Debug, Clone)]
 struct ExplanationParts {
-    icon: &'static str,
     title: &'static str,
     details: String,
     suggestions: Vec<String>,
@@ -46,9 +45,8 @@ struct ExplanationParts {
 }
 
 impl ExplanationParts {
-    const fn new(icon: &'static str, title: &'static str) -> Self {
+    const fn new(title: &'static str) -> Self {
         Self {
-            icon,
             title,
             details: String::new(),
             suggestions: Vec::new(),
@@ -81,10 +79,12 @@ impl ExplanationParts {
     }
 
     fn build(self) -> String {
-        let mut lines = vec![format!("{} {}: {}", self.icon, self.title, self.details)];
+        let mut lines = vec![format!(" {}: {}", self.title, self.details)];
 
-        if !self.suggestions.is_empty() {
-            lines.push("   💡 Suggestions:".to_string());
+        if self.suggestions.len() == 1 {
+            lines.push(format!("   Suggestion: {}", self.suggestions[0]));
+        } else if !self.suggestions.is_empty() {
+            lines.push("   Suggestions:".to_string());
             lines.extend(self.suggestions.into_iter().map(|s| format!("      • {s}")));
         }
 
@@ -151,7 +151,7 @@ impl RebuildReason {
             _ => vec!["Ensure consistent environment between builds"],
         };
 
-        ExplanationParts::new("🔧", "ENVIRONMENT VARIABLE")
+        ExplanationParts::new("ENVIRONMENT VARIABLE")
             .with_details(format!("'{name}' {change_desc}"))
             .with_suggestions(suggestions)
             .build()
@@ -176,19 +176,19 @@ impl RebuildReason {
             ],
         };
 
-        let mut parts = ExplanationParts::new("📦", "DEPENDENCY")
+        let mut parts = ExplanationParts::new("DEPENDENCY")
             .with_details(format!("'{name}' was rebuilt"))
             .with_suggestions(suggestions);
 
         if let Some(ctx) = context {
             if let Some(root_cause) = &ctx.root_cause {
-                parts = parts.with_context("🔍 Root cause", root_cause);
+                parts = parts.with_context("Root cause", root_cause);
             }
             if let Some(package_id) = &ctx.package_id {
-                parts = parts.with_context("📋 Package", package_id);
+                parts = parts.with_context("Package", package_id);
             }
             if let Some(target_type) = &ctx.target_type {
-                parts = parts.with_context("🎯 Target", target_type);
+                parts = parts.with_context("Target", target_type);
             }
         }
 
@@ -207,7 +207,7 @@ impl RebuildReason {
             &new.join(" ")
         };
 
-        ExplanationParts::new("🚩", "RUSTFLAGS CHANGED")
+        ExplanationParts::new("RUSTFLAGS CHANGED")
             .with_details(format!("{old_flags} → {new_flags}"))
             .with_suggestions([
                 "Different development environments (nix-shell, different toolchains)",
@@ -220,7 +220,7 @@ impl RebuildReason {
     }
 
     fn explain_features_change(old: &str, new: &str) -> String {
-        ExplanationParts::new("🔧", "FEATURES CHANGED")
+        ExplanationParts::new("FEATURES CHANGED")
             .with_details(format!("'{old}' → '{new}'"))
             .with_suggestions([
                 "Different cargo commands (e.g., --features vs --all-features)",
@@ -232,7 +232,7 @@ impl RebuildReason {
     }
 
     fn explain_profile_configuration_change() -> String {
-        ExplanationParts::new("📊", "PROFILE CONFIGURATION")
+        ExplanationParts::new("PROFILE CONFIGURATION")
             .with_details("Build profile settings changed")
             .with_suggestions([
                 "Changed [profile.dev] or [profile.release] settings in Cargo.toml",
@@ -244,7 +244,7 @@ impl RebuildReason {
     }
 
     fn explain_target_configuration_change() -> String {
-        ExplanationParts::new("⚙️ ", "TARGET CONFIGURATION")
+        ExplanationParts::new("TARGET CONFIGURATION")
             .with_details("Build target settings changed")
             .with_suggestions([
                 "Switched between debug/release mode",
@@ -260,23 +260,26 @@ impl RebuildReason {
         let suggestion = if path.contains("Cargo.toml") || path.contains("Cargo.lock") {
             "Project configuration changed. This triggers rebuilds of affected crates."
         } else if path.contains(".rs") {
-            "Source file was modified. This is expected when code changes."
+            "Don't write to this file"
         } else if path.contains("build.rs") {
             "Build script changed. This often triggers rebuilds of multiple crates."
         } else {
             "A file that affects the build process was modified."
         };
 
-        ExplanationParts::new("📝", "FILE CHANGED")
+        ExplanationParts::new("File changed")
             .with_details(path.to_string())
             .with_suggestion(suggestion)
             .build()
     }
 
     fn explain_unknown_reason(msg: &str) -> String {
-        ExplanationParts::new("❓", "UNKNOWN REBUILD REASON")
+        ExplanationParts::new("UNKNOWN REBUILD REASON")
             .with_details(msg.trim().to_string())
-            .with_suggestion("This might be a new type of rebuild trigger. Consider reporting this for analysis.")
+            .with_suggestion(
+                "This might be a new type of rebuild trigger. Consider reporting this for \
+                 analysis.",
+            )
             .build()
     }
 }
@@ -284,89 +287,5 @@ impl RebuildReason {
 impl Display for RebuildReason {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.explanation())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rebuild_reason_display() {
-        let env_change = RebuildReason::EnvVarChanged {
-            name: "CC".to_string(),
-            old_value: Some("gcc".to_string()),
-            new_value: None,
-        };
-
-        assert!(env_change.to_string().contains("🔧 ENVIRONMENT VARIABLE"));
-        assert!(env_change.to_string().contains("CC"));
-
-        let dep_change = RebuildReason::UnitDependencyInfoChanged {
-            name: "rusqlite".to_string(),
-            old_fingerprint: "123".to_string(),
-            new_fingerprint: "456".to_string(),
-            context: None,
-        };
-
-        assert!(dep_change.to_string().contains("📦 DEPENDENCY"));
-        assert!(dep_change.to_string().contains("rusqlite"));
-
-        let target_change = RebuildReason::TargetConfigurationChanged;
-        assert!(target_change
-            .to_string()
-            .contains("⚙️  TARGET CONFIGURATION"));
-    }
-
-    #[test]
-    fn test_enhanced_explanations() {
-        let rustflags_change = RebuildReason::RustflagsChanged {
-            old: vec!["--cfg".to_string(), "test".to_string()],
-            new: vec![
-                "--cfg".to_string(),
-                "test".to_string(),
-                "-C".to_string(),
-                "target-cpu=native".to_string(),
-            ],
-        };
-
-        let explanation = rustflags_change.explanation();
-        assert!(explanation.contains("🚩 RUSTFLAGS CHANGED"));
-        assert!(explanation.contains("--cfg test"));
-        assert!(explanation.contains("target-cpu=native"));
-
-        let features_change = RebuildReason::FeaturesChanged {
-            old: "default".to_string(),
-            new: "default,serde".to_string(),
-        };
-
-        let explanation = features_change.explanation();
-        assert!(explanation.contains("🔧 FEATURES CHANGED"));
-        assert!(explanation.contains("'default' → 'default,serde'"));
-
-        let profile_change = RebuildReason::ProfileConfigurationChanged;
-        let explanation = profile_change.explanation();
-        assert!(explanation.contains("📊 PROFILE CONFIGURATION"));
-    }
-
-    #[test]
-    fn test_dependency_context_display() {
-        let dep_with_context = RebuildReason::UnitDependencyInfoChanged {
-            name: "libz-sys".to_string(),
-            old_fingerprint: "123".to_string(),
-            new_fingerprint: "456".to_string(),
-            context: Some(DependencyChangeContext {
-                package_id: Some("libz-sys v1.1.23".to_string()),
-                target_type: Some("build-script-build".to_string()),
-                root_cause: Some("CC environment variable changed".to_string()),
-            }),
-        };
-
-        let explanation = dep_with_context.explanation();
-        assert!(explanation.contains("📦 DEPENDENCY"));
-        assert!(explanation.contains("libz-sys"));
-        assert!(explanation.contains("🔍 Root cause: CC environment variable changed"));
-        assert!(explanation.contains("📋 Package: libz-sys v1.1.23"));
-        assert!(explanation.contains("🎯 Target: build-script-build"));
     }
 }

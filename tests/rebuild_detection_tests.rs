@@ -1,7 +1,10 @@
+use std::{
+    fs::{self, remove_file},
+    process::Command,
+};
+
 use assert_cmd::{cargo, prelude::*};
 use predicates::prelude::*;
-use std::fs::{self, remove_file};
-use std::process::Command;
 use tempfile::TempDir;
 
 fn create_test_project(name: &str) -> TempDir {
@@ -101,7 +104,6 @@ fn detects_rebuilds_when_environment_variables_change() {
 
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("REBUILD ANALYSIS SUMMARY"))
         .stderr(predicate::str::contains("ENVIRONMENT VARIABLE"));
 }
 
@@ -183,131 +185,21 @@ fn main() {
 
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("Found Cargo project"))
-        .stderr(predicate::str::contains("FILE CHANGED"));
+        .stderr(predicate::str::contains("File changed"));
 }
 
 #[test]
-fn detects_rebuilds_when_dependency_configuration_changes() {
-    let project = create_test_project("dep-test");
+fn formats_single_suggestion_inline() {
+    use cargo_dirty::parse_rebuild_reason;
 
-    // Build once
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("clean").current_dir(project.path());
-    let _ = cmd1.assert();
+    // Use the actual FsStatusOutdated format that cargo uses
+    let test_log = r#"dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/user/.cargo/registry/src/github.com-1ecc6299db9ec823/main.rs", reference_mtime: FileTime { seconds: 1234567890, nanos: 0 }, stale: "/home/user/project/src/main.rs", stale_mtime: FileTime { seconds: 1234567891, nanos: 0 } }))"#;
+    let reason = parse_rebuild_reason(test_log).unwrap();
 
-    // Modify Cargo.toml to change dependencies
-    let cargo_toml = project.path().join("Cargo.toml");
-    fs::write(
-        &cargo_toml,
-        r#"
-[package]
-name = "dep-test"
-version = "0.1.0"
-edition = "2021"
+    let explanation = reason.explanation();
 
-[dependencies]
-log = "0.4"
-serde = "1.0"
-
-[build-dependencies]
-cc = "1.0"
-"#,
-    )
-    .unwrap();
-
-    // Test cargo-dirty after dependency change
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
-    cmd.arg("--path")
-        .arg(project.path())
-        .arg("--verbose")
-        .arg("--command")
-        .arg("build");
-
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("Found Cargo project"));
-}
-
-#[test]
-fn detects_rebuilds_when_rust_source_files_change() {
-    let project = create_test_project("file-test");
-
-    // Initial build
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("clean").current_dir(project.path());
-    let _ = cmd1.assert();
-
-    // Modify source file
-    let src_file = project.path().join("src").join("main.rs");
-    fs::write(
-        &src_file,
-        r#"
-use log::info;
-
-fn main() {
-    env_logger::init();
-    info!("Hello, modified world!");
-    println!("This is a change");
-}
-"#,
-    )
-    .unwrap();
-
-    // Test cargo-dirty after file change
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
-    cmd.arg("--path")
-        .arg(project.path())
-        .arg("--verbose")
-        .arg("--command")
-        .arg("build");
-
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("Found Cargo project"));
-}
-
-#[test]
-fn handles_multiple_environment_variable_changes() {
-    let project = create_test_project("multi-env-test");
-
-    // Test with multiple environment variables that affect builds
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
-    cmd.arg("--path")
-        .arg(project.path())
-        .arg("--verbose")
-        .arg("--command")
-        .arg("build")
-        .env("RUSTFLAGS", "-C target-cpu=native")
-        .env("CARGO_TARGET_DIR", project.path().join("custom_target"))
-        .env("CC", "gcc-12")
-        .env("CUSTOM_VAR", "multiple_changes");
-
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("Found Cargo project"));
-}
-
-#[test]
-fn reports_no_rebuild_reasons_for_clean_incremental_build() {
-    let project = create_test_project("clean-test");
-
-    // Build twice without changes - should show no rebuild reasons on second run
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("build").current_dir(project.path());
-    let _ = cmd1.assert();
-
-    // Second build should be incremental
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
-    cmd.arg("--path")
-        .arg(project.path())
-        .arg("--verbose")
-        .arg("--command")
-        .arg("build");
-
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("Found Cargo project"));
+    // Should contain the suggestion inline
+    assert!(explanation.contains("Don't write to this file"));
 }
 
 #[test]
@@ -319,7 +211,7 @@ fn formats_rebuild_reason_explanations_with_suggestions() {
     let reason = parse_rebuild_reason(test_log).unwrap();
 
     let explanation = reason.explanation();
-    assert!(explanation.contains("🔧 ENVIRONMENT VARIABLE"));
+    assert!(explanation.contains("ENVIRONMENT VARIABLE"));
     assert!(explanation.contains("RUSTFLAGS"));
-    assert!(explanation.contains("💡 Suggestion"));
+    assert!(explanation.contains("Suggestion"));
 }

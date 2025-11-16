@@ -1,13 +1,10 @@
-{ pkgs ? import <nixpkgs> {} }:
+{
+  pkgs ? import <nixpkgs> { },
+}:
 
 pkgs.mkShell {
   buildInputs = with pkgs; [
-    # Rust development environment
-    rustc
-    cargo
-    rustfmt
-    clippy
-
+    rustup
     # Required system dependencies
     openssl
     pkgconf
@@ -24,10 +21,4 @@ pkgs.mkShell {
   # Set PKG_CONFIG_PATH for proper library detection
   PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig:${pkgs.pkgconf}/lib/pkgconfig";
 
-  shellHook = ''
-    echo "cargo-dirty development environment"
-    echo "Rust version: $(rustc --version)"
-    echo "Cargo version: $(cargo --version)"
-    echo "OpenSSL: ${pkgs.openssl.version}"
-  '';
 }
