@@ -4,7 +4,7 @@ pub fn print_rebuild_analysis(rebuild_reasons: &[RebuildReason]) {
     eprintln!("\nRebuild Analysis ({} triggers)\n", rebuild_reasons.len());
 
     for reason in rebuild_reasons {
-        eprintln!("{reason}");
+        eprintln!("- {reason}");
     }
 
     if rebuild_reasons.len() > 1 {

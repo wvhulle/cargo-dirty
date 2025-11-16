@@ -151,7 +151,7 @@ impl RebuildReason {
             _ => vec!["Ensure consistent environment between builds"],
         };
 
-        ExplanationParts::new("ENVIRONMENT VARIABLE")
+        ExplanationParts::new("Environment variable")
             .with_details(format!("'{name}' {change_desc}"))
             .with_suggestions(suggestions)
             .build()
@@ -176,7 +176,7 @@ impl RebuildReason {
             ],
         };
 
-        let mut parts = ExplanationParts::new("DEPENDENCY")
+        let mut parts = ExplanationParts::new("Dependency")
             .with_details(format!("'{name}' was rebuilt"))
             .with_suggestions(suggestions);
 
@@ -257,20 +257,37 @@ impl RebuildReason {
     }
 
     fn explain_file_change(path: &str) -> String {
-        let suggestion = if path.contains("Cargo.toml") || path.contains("Cargo.lock") {
-            "Project configuration changed. This triggers rebuilds of affected crates."
+        let (suggestion, note) = if path.contains("Cargo.toml") || path.contains("Cargo.lock") {
+            (
+                "Project configuration changed. This triggers rebuilds of affected crates.",
+                None,
+            )
         } else if path.contains(".rs") {
-            "Don't write to this file"
+            (
+                "Source file modified",
+                Some(
+                    "Note: Cargo only reports top-level files. If this file imports modules, \
+                     those changes are included but not separately listed.",
+                ),
+            )
         } else if path.contains("build.rs") {
-            "Build script changed. This often triggers rebuilds of multiple crates."
+            (
+                "Build script changed. This often triggers rebuilds of multiple crates.",
+                None,
+            )
         } else {
-            "A file that affects the build process was modified."
+            ("A file that affects the build process was modified.", None)
         };
 
-        ExplanationParts::new("File changed")
+        let mut parts = ExplanationParts::new("File changed")
             .with_details(path.to_string())
-            .with_suggestion(suggestion)
-            .build()
+            .with_suggestion(suggestion);
+
+        if let Some(note_text) = note {
+            parts = parts.with_suggestion(note_text);
+        }
+
+        parts.build()
     }
 
     fn explain_unknown_reason(msg: &str) -> String {

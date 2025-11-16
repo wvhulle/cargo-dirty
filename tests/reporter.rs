@@ -8,7 +8,7 @@ fn rebuild_reason_displays_environment_variable_changes() {
         new_value: None,
     };
 
-    assert!(env_change.to_string().contains("ENVIRONMENT VARIABLE"));
+    assert!(env_change.to_string().contains("Environment variable"));
     assert!(env_change.to_string().contains("CC"));
 
     let dep_change = RebuildReason::UnitDependencyInfoChanged {
@@ -18,7 +18,7 @@ fn rebuild_reason_displays_environment_variable_changes() {
         context: None,
     };
 
-    assert!(dep_change.to_string().contains("DEPENDENCY"));
+    assert!(dep_change.to_string().contains("Dependency"));
     assert!(dep_change.to_string().contains("rusqlite"));
 
     let target_change = RebuildReason::TargetConfigurationChanged;
@@ -70,7 +70,7 @@ fn dependency_change_displays_context_information() {
     };
 
     let explanation = dep_with_context.explanation();
-    assert!(explanation.contains("DEPENDENCY"));
+    assert!(explanation.contains("Dependency"));
     assert!(explanation.contains("libz-sys"));
     assert!(explanation.contains("Root cause: CC environment variable changed"));
     assert!(explanation.contains("Package: libz-sys v1.1.23"));

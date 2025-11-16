@@ -39,7 +39,6 @@ edition = "2021"
         let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
         cmd.arg("--path").arg(temp_dir.path());
         cmd.arg("--command").arg(command);
-        cmd.arg("--verbose");
 
         cmd.assert()
             .success()

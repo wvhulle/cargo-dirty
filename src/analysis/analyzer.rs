@@ -63,7 +63,7 @@ pub fn analyze_cargo_logs(reader: BufReader<ChildStderr>) -> Result<(), Box<dyn 
         let line = line?;
         debug!("Cargo log: {line}");
 
-        if line.contains("fingerprint") && line.contains("dirty:") {
+        if line.contains("fingerprint") && (line.contains("dirty:") || line.contains("stale:")) {
             debug!("Rebuild trigger detected: {line}");
             if let Some(reason) = parse_rebuild_reason(&line) {
                 rebuild_reasons.push(reason);

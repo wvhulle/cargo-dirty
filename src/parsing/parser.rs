@@ -191,10 +191,26 @@ fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
     ))(input)
 }
 
+// Parse the simple "stale: changed <path>" pattern using nom
+fn parse_stale_changed_content(input: &str) -> IResult<&str, RebuildReason> {
+    let (input, _) = tag("stale: changed ")(input)?;
+    let (input, path) = parse_quoted_string(input)?;
+
+    Ok((input, RebuildReason::FileChanged { path }))
+}
+
 // Parse the full "dirty: <reason>" pattern
 #[must_use]
 pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
-    // Find the "dirty:" part in the log line
+    // First try to parse "stale: changed" pattern
+    if let Some(stale_start) = input.find("stale: changed ") {
+        let stale_content = &input[stale_start..];
+        if let Ok((_, reason)) = parse_stale_changed_content(stale_content) {
+            return Some(reason);
+        }
+    }
+
+    // Fall back to parsing "dirty:" pattern
     input.find("dirty:").and_then(|dirty_start| {
         let dirty_content = &input[dirty_start + 6..].trim_start();
 

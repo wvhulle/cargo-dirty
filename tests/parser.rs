@@ -137,20 +137,6 @@ fn nom_parser_handles_malformed_input_gracefully() {
 }
 
 #[test]
-fn formats_single_suggestion_inline() {
-    use cargo_dirty::parse_rebuild_reason;
-
-    // Use the actual FsStatusOutdated format that cargo uses
-    let test_log = r#"dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/user/.cargo/registry/src/github.com-1ecc6299db9ec823/main.rs", reference_mtime: FileTime { seconds: 1234567890, nanos: 0 }, stale: "/home/user/project/src/main.rs", stale_mtime: FileTime { seconds: 1234567891, nanos: 0 } }))"#;
-    let reason = parse_rebuild_reason(test_log).unwrap();
-
-    let explanation = reason.explanation();
-
-    // Should contain the suggestion inline
-    assert!(explanation.contains("Don't write to this file"));
-}
-
-#[test]
 fn formats_rebuild_reason_explanations_with_suggestions() {
     // Test that our improved explanations are actually shown
     use cargo_dirty::parse_rebuild_reason;
@@ -159,7 +145,7 @@ fn formats_rebuild_reason_explanations_with_suggestions() {
     let reason = parse_rebuild_reason(test_log).unwrap();
 
     let explanation = reason.explanation();
-    assert!(explanation.contains("ENVIRONMENT VARIABLE"));
+    assert!(explanation.contains("Environment variable"));
     assert!(explanation.contains("RUSTFLAGS"));
     assert!(explanation.contains("Suggestion"));
 }

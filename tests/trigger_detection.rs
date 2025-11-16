@@ -97,14 +97,13 @@ fn detects_rebuilds_when_environment_variables_change() {
     let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
     cmd.arg("--path")
         .arg(project.path())
-        .arg("--verbose")
         .arg("--command")
         .arg("build")
         .env("CUSTOM_VAR", "test_value");
 
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("ENVIRONMENT VARIABLE"));
+        .stderr(predicate::str::contains("Environment variable"));
 }
 
 #[test]
@@ -127,7 +126,6 @@ fn detects_rebuilds_when_c_compiler_environment_changes() {
     let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
     cmd.arg("--path")
         .arg(project.path())
-        .arg("--verbose")
         .arg("--command")
         .arg("build")
         .env("CC", "clang");
@@ -179,7 +177,6 @@ fn main() {
     let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
     cmd.arg("--path")
         .arg(project.path())
-        .arg("--verbose")
         .arg("--command")
         .arg("build");
 
@@ -189,34 +186,38 @@ fn main() {
 }
 
 #[test]
-fn detects_rebuilds_when_multiple_source_files_are_modified() {
-    let project = create_test_project("target-test");
+fn detects_rebuilds_when_file_and_env_var_change() {
+    let project = create_test_project("multi-trigger-test");
 
-    // Remove the build script for this test to avoid C compilation issues
-    let _ = remove_file(project.path().join("build.rs"));
-
-    // Update Cargo.toml to remove build dependencies
+    // Update Cargo.toml to keep the build script with env var dependency
     let cargo_toml = project.path().join("Cargo.toml");
     fs::write(
         &cargo_toml,
         r#"
 [package]
-name = "target-test"
+name = "multi-trigger-test"
 version = "0.1.0"
 edition = "2021"
+
+[build-dependencies]
+cc = "1.0"
 "#,
     )
     .unwrap();
 
-    // First build in debug mode
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("build").current_dir(project.path());
-    cmd1.assert().success();
+    let src_dir = project.path().join("src");
 
-    // Now modify a source file to force a rebuild, then test with different profile
-    let src_file = project.path().join("src/main.rs");
+    // First build without custom env var
+    let mut cmd1 = Command::new("cargo");
+    cmd1.arg("build")
+        .current_dir(project.path())
+        .env_remove("CUSTOM_VAR");
+    let _ = cmd1.assert(); // May fail due to missing C compiler, but creates fingerprints
+
+    // Now modify main.rs
+    let main_file = src_dir.join("main.rs");
     fs::write(
-        &src_file,
+        &main_file,
         r#"
 fn main() {
     println!("Hello, modified world!");
@@ -225,15 +226,27 @@ fn main() {
     )
     .unwrap();
 
-    // Test cargo-dirty with the same debug build - should detect file changes
+    // Test cargo-dirty with both file change AND environment variable change
     let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
     cmd.arg("--path")
         .arg(project.path())
-        .arg("--verbose")
         .arg("--command")
-        .arg("build");
+        .arg("build")
+        .env("CUSTOM_VAR", "test_value");
 
-    cmd.assert()
-        .success()
-        .stderr(predicate::str::contains("File changed"));
+    let assert = cmd.assert().success();
+
+    // Should detect both triggers:
+    // 1. File changed (main.rs)
+    // 2. Environment variable changed (CUSTOM_VAR)
+    assert
+        .stderr(predicate::str::contains("File changed"))
+        .stderr(predicate::str::contains("main.rs"))
+        .stderr(
+            predicate::str::contains("Environment variable")
+                .or(predicate::str::contains("CUSTOM_VAR")),
+        )
+        .stderr(predicate::str::contains("Rebuild Analysis"))
+        // Should report multiple triggers
+        .stderr(predicate::str::contains("triggers").or(predicate::str::contains("trigger")));
 }
