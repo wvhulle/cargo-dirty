@@ -1,7 +1,13 @@
 [package]
+authors = ["Willem Vanhulle <willemvanhulle@protonmail.com>"]
+description = "A tool to analyze why Cargo rebuilds your project often."
 edition = "2024"
+keywords = ["compilation", "cargo", "fingerprint", "helper", "tool"]
+license = "MIT"
 name = "cargo-dirty"
+repository = "https://github.com/wvhulle/cargo-dirty"
 version = "0.0.1"
+
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
