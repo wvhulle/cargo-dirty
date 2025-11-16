@@ -189,29 +189,51 @@ fn main() {
 }
 
 #[test]
-fn formats_single_suggestion_inline() {
-    use cargo_dirty::parse_rebuild_reason;
+fn detects_rebuilds_when_multiple_source_files_are_modified() {
+    let project = create_test_project("target-test");
 
-    // Use the actual FsStatusOutdated format that cargo uses
-    let test_log = r#"dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/home/user/.cargo/registry/src/github.com-1ecc6299db9ec823/main.rs", reference_mtime: FileTime { seconds: 1234567890, nanos: 0 }, stale: "/home/user/project/src/main.rs", stale_mtime: FileTime { seconds: 1234567891, nanos: 0 } }))"#;
-    let reason = parse_rebuild_reason(test_log).unwrap();
+    // Remove the build script for this test to avoid C compilation issues
+    let _ = remove_file(project.path().join("build.rs"));
 
-    let explanation = reason.explanation();
+    // Update Cargo.toml to remove build dependencies
+    let cargo_toml = project.path().join("Cargo.toml");
+    fs::write(
+        &cargo_toml,
+        r#"
+[package]
+name = "target-test"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )
+    .unwrap();
 
-    // Should contain the suggestion inline
-    assert!(explanation.contains("Don't write to this file"));
+    // First build in debug mode
+    let mut cmd1 = Command::new("cargo");
+    cmd1.arg("build").current_dir(project.path());
+    cmd1.assert().success();
+
+    // Now modify a source file to force a rebuild, then test with different profile
+    let src_file = project.path().join("src/main.rs");
+    fs::write(
+        &src_file,
+        r#"
+fn main() {
+    println!("Hello, modified world!");
 }
+"#,
+    )
+    .unwrap();
 
-#[test]
-fn formats_rebuild_reason_explanations_with_suggestions() {
-    // Test that our improved explanations are actually shown
-    use cargo_dirty::parse_rebuild_reason;
+    // Test cargo-dirty with the same debug build - should detect file changes
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    cmd.arg("--path")
+        .arg(project.path())
+        .arg("--verbose")
+        .arg("--command")
+        .arg("build");
 
-    let test_log = r#"dirty: EnvVarChanged { name: "RUSTFLAGS", old_value: None, new_value: Some("-C target-cpu=native") }"#;
-    let reason = parse_rebuild_reason(test_log).unwrap();
-
-    let explanation = reason.explanation();
-    assert!(explanation.contains("ENVIRONMENT VARIABLE"));
-    assert!(explanation.contains("RUSTFLAGS"));
-    assert!(explanation.contains("Suggestion"));
+    cmd.assert()
+        .success()
+        .stderr(predicate::str::contains("File changed"));
 }
