@@ -1,7 +1,6 @@
 use std::{fs, process::Command};
 
 use assert_cmd::{cargo, prelude::*};
-use predicates::prelude::*;
 use tempfile::TempDir;
 
 #[test]
@@ -9,9 +8,12 @@ fn cli_reports_error_for_invalid_project_path() {
     let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
     cmd.arg("--path").arg("/nonexistent/path");
 
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("Cargo.toml not found"));
+    let output = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("Cargo.toml not found"),
+        "Expected stderr to contain 'Cargo.toml not found', got: {stderr}"
+    );
 }
 
 #[test]
@@ -34,16 +36,17 @@ edition = "2021"
     fs::create_dir(&src_dir).unwrap();
     fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
 
-    // Test with different cargo commands
     for command in &["check", "build", "test"] {
         let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
         cmd.arg("--path").arg(temp_dir.path());
         cmd.arg("--command").arg(command);
 
-        cmd.assert()
-            .success()
-            .stderr(predicate::str::contains(format!(
-                "Running: cargo {command}"
-            )));
+        let output = cmd.assert().success();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+        let expected = format!("Running: cargo {command}");
+        assert!(
+            stderr.contains(&expected),
+            "Expected stderr to contain '{expected}', got: {stderr}"
+        );
     }
 }

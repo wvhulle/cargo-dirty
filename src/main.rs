@@ -13,6 +13,9 @@ struct Args {
     #[arg(short, long, help = "Verbose output")]
     verbose: bool,
 
+    #[arg(long, help = "Output analysis as JSON")]
+    json: bool,
+
     #[arg(long, help = "Cargo command to analyze", default_value = "check")]
     command: String,
 
@@ -49,5 +52,5 @@ fn main() -> Result<(), Box<dyn Error>> {
         format!("{} {}", args.command, args.cargo.join(" "))
     };
 
-    analyze_dirty_reasons(&project_path, &full_command)
+    analyze_dirty_reasons(&project_path, &full_command, args.json)
 }

@@ -1,4 +1,4 @@
-use cargo_dirty::{parsing::DependencyChangeContext, RebuildReason};
+use cargo_dirty::{DependencyChangeContext, RebuildReason};
 
 #[test]
 fn rebuild_reason_displays_environment_variable_changes() {
@@ -8,8 +8,8 @@ fn rebuild_reason_displays_environment_variable_changes() {
         new_value: None,
     };
 
-    assert!(env_change.to_string().contains("Environment variable"));
-    assert!(env_change.to_string().contains("CC"));
+    assert!(env_change.to_string().contains("env:CC"));
+    assert!(env_change.to_string().contains("'gcc' -> unset"));
 
     let dep_change = RebuildReason::UnitDependencyInfoChanged {
         name: "rusqlite".to_string(),
@@ -18,11 +18,10 @@ fn rebuild_reason_displays_environment_variable_changes() {
         context: None,
     };
 
-    assert!(dep_change.to_string().contains("Dependency"));
-    assert!(dep_change.to_string().contains("rusqlite"));
+    assert!(dep_change.to_string().contains("dep:rusqlite"));
 
     let target_change = RebuildReason::TargetConfigurationChanged;
-    assert!(target_change.to_string().contains("TARGET CONFIGURATION"));
+    assert!(target_change.to_string().contains("target config changed"));
 }
 
 #[test]

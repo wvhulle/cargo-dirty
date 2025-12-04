@@ -1,93 +1,152 @@
-use crate::parsing::RebuildReason;
+use serde::Serialize;
 
-pub fn print_rebuild_analysis(rebuild_reasons: &[RebuildReason]) {
-    eprintln!("\nRebuild Analysis ({} triggers)\n", rebuild_reasons.len());
+use crate::parsing::rebuild_reason::RebuildReason;
 
-    for reason in rebuild_reasons {
-        eprintln!("- {reason}");
-    }
+use super::graph::{RebuildGraph, RebuildNode, RootCauseChain};
 
-    if rebuild_reasons.len() > 1 {
-        let env_changes = rebuild_reasons
-            .iter()
-            .filter(|r| matches!(r, RebuildReason::EnvVarChanged { .. }))
-            .count();
-        let dep_changes = rebuild_reasons
-            .iter()
-            .filter(|r| matches!(r, RebuildReason::UnitDependencyInfoChanged { .. }))
-            .count();
-        let target_changes = rebuild_reasons
-            .iter()
-            .filter(|r| matches!(r, RebuildReason::TargetConfigurationChanged))
-            .count();
-        let file_changes = rebuild_reasons
-            .iter()
-            .filter(|r| matches!(r, RebuildReason::FileChanged { .. }))
-            .count();
+/// Tree node representing a rebuild cause with nested cascades
+#[derive(Debug, Serialize)]
+pub struct RebuildTree {
+    pub package: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cascades: Vec<RebuildTree>,
+}
 
-        print_summary_breakdown(env_changes, dep_changes, target_changes, file_changes);
-        print_optimization_tips(env_changes, dep_changes, rebuild_reasons.len());
+impl RebuildTree {
+    fn from_chain(chain: &RootCauseChain) -> Self {
+        Self {
+            package: chain.root_cause.package.package_id.clone(),
+            reason: format_reason(&chain.root_cause.reason),
+            cascades: chain
+                .affected_packages
+                .iter()
+                .map(|node| Self {
+                    package: node.package.package_id.clone(),
+                    reason: format_reason(&node.reason),
+                    cascades: Vec::new(),
+                })
+                .collect(),
+        }
     }
 }
 
-fn print_summary_breakdown(
-    env_changes: usize,
-    dep_changes: usize,
-    target_changes: usize,
-    file_changes: usize,
-) {
-    let total = env_changes + dep_changes + target_changes + file_changes;
-    if total == 0 {
-        return;
-    }
-
-    eprintln!("\nSummary:");
-    if env_changes > 0 {
-        eprintln!(
-            "   • {} env variable{}",
-            env_changes,
-            if env_changes > 1 { "s" } else { "" }
-        );
-    }
-    if dep_changes > 0 {
-        eprintln!(
-            "   • {} dependenc{}",
-            dep_changes,
-            if dep_changes > 1 { "ies" } else { "y" }
-        );
-    }
-    if target_changes > 0 {
-        eprintln!(
-            "   • {} config change{}",
-            target_changes,
-            if target_changes > 1 { "s" } else { "" }
-        );
-    }
-    if file_changes > 0 {
-        eprintln!(
-            "   • {} file{}",
-            file_changes,
-            if file_changes > 1 { "s" } else { "" }
-        );
+fn format_reason(reason: &RebuildReason) -> String {
+    match reason {
+        RebuildReason::EnvVarChanged { name, .. } => format!("env:{name}"),
+        RebuildReason::FileChanged { path } => format!("file:{path}"),
+        RebuildReason::UnitDependencyInfoChanged { name, .. } => format!("dep:{name}"),
+        RebuildReason::TargetConfigurationChanged => "config".to_string(),
+        RebuildReason::ProfileConfigurationChanged => "profile".to_string(),
+        RebuildReason::RustflagsChanged { .. } => "rustflags".to_string(),
+        RebuildReason::FeaturesChanged { .. } => "features".to_string(),
+        RebuildReason::Unknown(msg) => format!("unknown:{msg}"),
     }
 }
 
-fn print_optimization_tips(env_changes: usize, dep_changes: usize, total_changes: usize) {
-    let has_tips = env_changes > dep_changes || dep_changes > 0 || total_changes > 10;
+/// Simple JSON output: array of root cause trees
+pub fn build_rebuild_trees(graph: &RebuildGraph) -> Vec<RebuildTree> {
+    graph
+        .root_cause_chains()
+        .iter()
+        .map(RebuildTree::from_chain)
+        .collect()
+}
 
-    if !has_tips {
+/// Print JSON representation of the rebuild analysis to stdout
+///
+/// # Errors
+/// Returns error if serialization fails
+pub fn print_rebuild_analysis_json(graph: &RebuildGraph) -> Result<(), serde_json::Error> {
+    let trees = build_rebuild_trees(graph);
+    let json = serde_json::to_string_pretty(&trees)?;
+    println!("{json}");
+    Ok(())
+}
+
+/// JSON-serializable representation of the rebuild analysis (detailed version)
+#[derive(Debug, Serialize)]
+pub struct RebuildAnalysis {
+    pub total_rebuilds: usize,
+    pub root_cause_count: usize,
+    pub cascade_count: usize,
+    pub root_causes: Vec<RebuildNode>,
+    pub root_cause_chains: Vec<RootCauseChain>,
+    pub summary: RebuildSummary,
+}
+
+/// Summary breakdown by rebuild trigger type
+#[derive(Debug, Serialize)]
+pub struct RebuildSummary {
+    pub env_vars: usize,
+    pub dependencies: usize,
+    pub target_configs: usize,
+    pub files: usize,
+}
+
+impl RebuildAnalysis {
+    /// Build analysis from a `RebuildGraph`
+    #[must_use]
+    pub fn from_graph(graph: &RebuildGraph) -> Self {
+        let root_causes: Vec<_> = graph.root_causes().iter().map(|n| (*n).clone()).collect();
+        let root_cause_count = root_causes.len();
+        let total_rebuilds = graph.len();
+        let cascade_count = total_rebuilds - root_cause_count;
+
+        let nodes = graph.nodes();
+        let summary = RebuildSummary {
+            env_vars: nodes
+                .iter()
+                .filter(|n| matches!(n.reason, RebuildReason::EnvVarChanged { .. }))
+                .count(),
+            dependencies: nodes
+                .iter()
+                .filter(|n| matches!(n.reason, RebuildReason::UnitDependencyInfoChanged { .. }))
+                .count(),
+            target_configs: nodes
+                .iter()
+                .filter(|n| matches!(n.reason, RebuildReason::TargetConfigurationChanged))
+                .count(),
+            files: nodes
+                .iter()
+                .filter(|n| matches!(n.reason, RebuildReason::FileChanged { .. }))
+                .count(),
+        };
+
+        Self {
+            total_rebuilds,
+            root_cause_count,
+            cascade_count,
+            root_causes,
+            root_cause_chains: graph.root_cause_chains(),
+            summary,
+        }
+    }
+
+    /// Serialize to JSON string
+    ///
+    /// # Errors
+    /// Returns error if serialization fails
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+}
+
+pub fn print_rebuild_analysis(graph: &RebuildGraph) {
+    let root_causes = graph.root_causes();
+
+    if root_causes.is_empty() {
+        eprintln!("No rebuild triggers detected.");
         return;
     }
 
-    eprintln!("\nTips:");
-    if env_changes > dep_changes && env_changes > 0 {
-        eprintln!("   • Use direnv or nix-shell for consistent environments");
-    }
-    if dep_changes > 0 {
-        eprintln!("   • Try 'cargo build --keep-going' for better CI performance");
-        eprintln!("   • Consider workspace dependencies to reduce cascades");
-    }
-    if total_changes > 10 {
-        eprintln!("   • Many triggers detected - consider incremental changes");
+    eprintln!(
+        "\n{} root cause{}:",
+        root_causes.len(),
+        if root_causes.len() == 1 { "" } else { "s" }
+    );
+
+    for root in &root_causes {
+        eprintln!("  {} {}", root.package, root.reason);
     }
 }

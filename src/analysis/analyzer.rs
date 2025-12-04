@@ -7,8 +7,12 @@ use std::{
 
 use log::debug;
 
-use super::reporter::print_rebuild_analysis;
-use crate::parsing::parse_rebuild_reason;
+use crate::parsing::parser::parse_rebuild_entry;
+
+use super::{
+    graph::{RebuildGraph, RebuildNode},
+    reporter::{print_rebuild_analysis, print_rebuild_analysis_json},
+};
 
 /// Analyzes dirty reasons for cargo rebuilds
 ///
@@ -21,6 +25,7 @@ use crate::parsing::parse_rebuild_reason;
 pub fn analyze_dirty_reasons(
     project_path: &PathBuf,
     cargo_command: &str,
+    json_output: bool,
 ) -> Result<(), Box<dyn Error>> {
     let cargo_toml = project_path.join("Cargo.toml");
     if !cargo_toml.exists() {
@@ -45,19 +50,22 @@ pub fn analyze_dirty_reasons(
 
     if let Some(stderr) = output.stderr {
         let reader = BufReader::new(stderr);
-        analyze_cargo_logs(reader)?;
+        analyze_cargo_logs(reader, json_output)?;
     }
 
     Ok(())
 }
 
-/// Analyzes cargo log output for rebuild reasons
+/// Analyzes cargo log output for rebuild reasons and builds a causality graph
 ///
 /// # Errors
 ///
 /// Returns an error if reading from the stderr stream fails
-pub fn analyze_cargo_logs(reader: BufReader<ChildStderr>) -> Result<(), Box<dyn Error>> {
-    let mut rebuild_reasons = Vec::new();
+pub fn analyze_cargo_logs(
+    reader: BufReader<ChildStderr>,
+    json_output: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut graph = RebuildGraph::new();
 
     for line in reader.lines() {
         let line = line?;
@@ -65,8 +73,8 @@ pub fn analyze_cargo_logs(reader: BufReader<ChildStderr>) -> Result<(), Box<dyn 
 
         if line.contains("fingerprint") && (line.contains("dirty:") || line.contains("stale:")) {
             debug!("Rebuild trigger detected: {line}");
-            if let Some(reason) = parse_rebuild_reason(&line) {
-                rebuild_reasons.push(reason);
+            if let Some(entry) = parse_rebuild_entry(&line) {
+                graph.add_node(RebuildNode::new(entry.package, entry.reason));
             }
         }
 
@@ -75,11 +83,17 @@ pub fn analyze_cargo_logs(reader: BufReader<ChildStderr>) -> Result<(), Box<dyn 
         }
     }
 
-    if rebuild_reasons.is_empty() {
-        eprintln!("No rebuild reasons detected - incremental build with no changes");
-        eprintln!("Cargo's incremental compilation is working effectively");
+    if graph.is_empty() {
+        if json_output {
+            println!("[]");
+        } else {
+            eprintln!("No rebuild reasons detected - incremental build with no changes");
+            eprintln!("Cargo's incremental compilation is working effectively");
+        }
+    } else if json_output {
+        print_rebuild_analysis_json(&graph)?;
     } else {
-        print_rebuild_analysis(&rebuild_reasons);
+        print_rebuild_analysis(&graph);
     }
 
     Ok(())

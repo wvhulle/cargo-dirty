@@ -1,6 +1,8 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum RebuildReason {
     EnvVarChanged {
         name: String,
@@ -29,7 +31,7 @@ pub enum RebuildReason {
     Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DependencyChangeContext {
     pub package_id: Option<String>,
     pub target_type: Option<String>,
@@ -303,6 +305,27 @@ impl RebuildReason {
 
 impl Display for RebuildReason {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.explanation())
+        match self {
+            Self::EnvVarChanged {
+                name,
+                old_value,
+                new_value,
+            } => {
+                let change = match (old_value, new_value) {
+                    (Some(old), Some(new)) => format!("'{old}' -> '{new}'"),
+                    (Some(old), None) => format!("'{old}' -> unset"),
+                    (None, Some(new)) => format!("unset -> '{new}'"),
+                    (None, None) => "changed".to_string(),
+                };
+                write!(f, "env:{name} ({change})")
+            }
+            Self::UnitDependencyInfoChanged { name, .. } => write!(f, "dep:{name}"),
+            Self::RustflagsChanged { .. } => write!(f, "rustflags changed"),
+            Self::FeaturesChanged { old, new } => write!(f, "features: {old} -> {new}"),
+            Self::ProfileConfigurationChanged => write!(f, "profile changed"),
+            Self::TargetConfigurationChanged => write!(f, "target config changed"),
+            Self::FileChanged { path } => write!(f, "file:{path}"),
+            Self::Unknown(msg) => write!(f, "unknown:{msg}"),
+        }
     }
 }

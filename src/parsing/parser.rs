@@ -4,15 +4,67 @@
 //! fingerprint log output and extract structured rebuild reasons.
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{char, digit1, space0},
     combinator::map,
     sequence::{delimited, preceded, terminated, tuple},
-    IResult,
 };
 
-use super::RebuildReason;
+use crate::RebuildReason;
+use crate::analysis::graph::PackageTarget;
+
+/// A parsed rebuild entry with package context and reason
+#[derive(Debug, Clone)]
+pub struct ParsedRebuildEntry {
+    pub package: PackageTarget,
+    pub reason: RebuildReason,
+}
+
+impl ParsedRebuildEntry {
+    #[must_use]
+    pub const fn new(package: PackageTarget, reason: RebuildReason) -> Self {
+        Self { package, reason }
+    }
+}
+
+/// Extract package context from cargo log line
+/// Parses patterns like: `prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}`
+fn extract_package_context(line: &str) -> PackageTarget {
+    let package_id = line.find("package_id=").map_or_else(
+        || "unknown".to_string(),
+        |pkg_start| {
+            let after_pkg = &line[pkg_start + 11..];
+            let end = after_pkg
+                .find(" target=")
+                .or_else(|| after_pkg.find('}'))
+                .unwrap_or(after_pkg.len());
+            after_pkg[..end].trim().to_string()
+        },
+    );
+
+    let target = line.find("target=").and_then(|target_start| {
+        let after_target = &line[target_start + 7..];
+        after_target.strip_prefix('"').map_or_else(
+            || {
+                let end = after_target
+                    .find([' ', '}', ':'])
+                    .unwrap_or(after_target.len());
+                let value = after_target[..end].trim();
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            },
+            |stripped| stripped.find('"').map(|quote_end| stripped[..quote_end].to_string()),
+        )
+    });
+
+    PackageTarget::new(package_id, target)
+}
+
 // Parse a quoted string: "hello world"
 fn parse_quoted_string(input: &str) -> IResult<&str, String> {
     delimited(
@@ -170,7 +222,7 @@ fn parse_changed_file(input: &str) -> IResult<&str, String> {
 }
 
 // Parse FsStatusOutdated(StaleItem(ChangedFile { ... }))
-fn parse_fs_status_outdated(input: &str) -> IResult<&str, RebuildReason> {
+fn parse_fs_status_outdated_changed_file(input: &str) -> IResult<&str, RebuildReason> {
     let (input, _) = tag("FsStatusOutdated")(input)?;
     let (input, _) = tuple((char('('), tag("StaleItem"), char('(')))(input)?;
 
@@ -181,36 +233,45 @@ fn parse_fs_status_outdated(input: &str) -> IResult<&str, RebuildReason> {
     Ok((input, RebuildReason::FileChanged { path }))
 }
 
+// Parse FsStatusOutdated(StaleDepFingerprint { name: "..." })
+fn parse_fs_status_outdated_stale_dep(input: &str) -> IResult<&str, RebuildReason> {
+    let (input, _) = tag("FsStatusOutdated")(input)?;
+    let (input, _) = tuple((char('('), tag("StaleDepFingerprint"), space0, char('{'), space0))(
+        input,
+    )?;
+
+    let (input, _) = tuple((tag("name"), space0, char(':'), space0))(input)?;
+    let (input, name) = parse_quoted_string(input)?;
+
+    let (input, _) = tuple((space0, char('}'), char(')')))(input)?;
+
+    Ok((
+        input,
+        RebuildReason::UnitDependencyInfoChanged {
+            name,
+            old_fingerprint: String::new(),
+            new_fingerprint: String::new(),
+            context: None,
+        },
+    ))
+}
+
 // Main parser for dirty reasons
 fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
     alt((
         parse_env_var_changed,
         parse_unit_dependency_info_changed,
         parse_target_configuration_changed,
-        parse_fs_status_outdated,
+        parse_fs_status_outdated_stale_dep,
+        parse_fs_status_outdated_changed_file,
     ))(input)
-}
-
-// Parse the simple "stale: changed <path>" pattern using nom
-fn parse_stale_changed_content(input: &str) -> IResult<&str, RebuildReason> {
-    let (input, _) = tag("stale: changed ")(input)?;
-    let (input, path) = parse_quoted_string(input)?;
-
-    Ok((input, RebuildReason::FileChanged { path }))
 }
 
 // Parse the full "dirty: <reason>" pattern
 #[must_use]
 pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
-    // First try to parse "stale: changed" pattern
-    if let Some(stale_start) = input.find("stale: changed ") {
-        let stale_content = &input[stale_start..];
-        if let Ok((_, reason)) = parse_stale_changed_content(stale_content) {
-            return Some(reason);
-        }
-    }
-
-    // Fall back to parsing "dirty:" pattern
+    // Only parse "dirty:" lines - the "stale: changed" lines are redundant
+    // with FsStatusOutdated(StaleItem(ChangedFile...)) and report the wrong package context
     input.find("dirty:").and_then(|dirty_start| {
         let dirty_content = &input[dirty_start + 6..].trim_start();
 
@@ -219,4 +280,44 @@ pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
             Err(_) => None,
         }
     })
+}
+
+/// Parse a complete rebuild entry with package context from a cargo log line
+#[must_use]
+pub fn parse_rebuild_entry(input: &str) -> Option<ParsedRebuildEntry> {
+    let reason = parse_rebuild_reason(input)?;
+    let package = extract_package_context(input);
+    Some(ParsedRebuildEntry::new(package, reason))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_package_context_from_cargo_log() {
+        let log_line = r#"    0.102058909s  INFO prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
+
+        let entry = parse_rebuild_entry(log_line).unwrap();
+        assert_eq!(entry.package.package_id, "libz-sys v1.1.23");
+        assert_eq!(entry.package.target, Some("build-script-build".to_string()));
+    }
+
+    #[test]
+    fn handles_missing_package_context() {
+        let log_line = r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
+
+        let entry = parse_rebuild_entry(log_line).unwrap();
+        assert_eq!(entry.package.package_id, "unknown");
+        assert_eq!(entry.package.target, None);
+    }
+
+    #[test]
+    fn extracts_package_without_target() {
+        let log_line = r"prepare_target{force=false package_id=serde v1.0.0}: dirty: TargetConfigurationChanged";
+
+        let entry = parse_rebuild_entry(log_line).unwrap();
+        assert_eq!(entry.package.package_id, "serde v1.0.0");
+        assert_eq!(entry.package.target, None);
+    }
 }
