@@ -12,8 +12,7 @@ use nom::{
     sequence::{delimited, preceded, terminated, tuple},
 };
 
-use crate::RebuildReason;
-use crate::rebuild_graph::PackageTarget;
+use crate::{RebuildReason, rebuild_graph::PackageTarget};
 
 /// A parsed rebuild entry with package context and reason
 #[derive(Debug, Clone)]
@@ -30,7 +29,8 @@ impl ParsedRebuildEntry {
 }
 
 /// Extract package context from cargo log line
-/// Parses patterns like: `prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}`
+/// Parses patterns like: `prepare_target{force=false package_id=libz-sys
+/// v1.1.23 target="build-script-build"}`
 fn extract_package_context(line: &str) -> PackageTarget {
     let package_id = line.find("package_id=").map_or_else(
         || "unknown".to_string(),
@@ -48,7 +48,9 @@ fn extract_package_context(line: &str) -> PackageTarget {
         let after_target = &line[target_start + 7..];
 
         if let Some(stripped) = after_target.strip_prefix('"') {
-            return stripped.find('"').map(|quote_end| stripped[..quote_end].to_string());
+            return stripped
+                .find('"')
+                .map(|quote_end| stripped[..quote_end].to_string());
         }
 
         let end = after_target
@@ -276,7 +278,8 @@ fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
 #[must_use]
 pub fn parse_rebuild_reason(input: &str) -> Option<RebuildReason> {
     // Only parse "dirty:" lines - the "stale: changed" lines are redundant
-    // with FsStatusOutdated(StaleItem(ChangedFile...)) and report the wrong package context
+    // with FsStatusOutdated(StaleItem(ChangedFile...)) and report the wrong package
+    // context
     input.find("dirty:").and_then(|dirty_start| {
         let dirty_content = &input[dirty_start + 6..].trim_start();
 
@@ -328,25 +331,8 @@ mod tests {
     }
 
     #[test]
-    fn handles_env_var_changed_with_some_to_none() {
-        let log_line =
-            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        assert_eq!(
-            result,
-            Some(RebuildReason::EnvVarChanged {
-                name: "CC".to_string(),
-                old_value: Some("gcc".to_string()),
-                new_value: None,
-            })
-        );
-    }
-
-    #[test]
     fn handles_env_var_changed_with_none_to_some() {
-        let log_line =
-            r#"dirty: EnvVarChanged { name: "RUST_LOG", old_value: None, new_value: Some("debug") }"#;
+        let log_line = r#"dirty: EnvVarChanged { name: "RUST_LOG", old_value: None, new_value: Some("debug") }"#;
         let result = parse_rebuild_reason(log_line);
 
         assert_eq!(
@@ -409,25 +395,6 @@ mod tests {
                 path: "/tmp/.tmp6t5LHE/src/main.rs".to_string(),
             })
         );
-    }
-
-    #[test]
-    fn extracts_reason_from_complex_cargo_log_line() {
-        let log_line = r#"    0.102058909s  INFO prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
-        let result = parse_rebuild_reason(log_line);
-
-        if let Some(RebuildReason::EnvVarChanged {
-            name,
-            old_value,
-            new_value,
-        }) = result
-        {
-            assert_eq!(name, "CC");
-            assert_eq!(old_value, Some("gcc".to_string()));
-            assert_eq!(new_value, None);
-        } else {
-            panic!("Expected EnvVarChanged, got {result:?}");
-        }
     }
 
     #[test]

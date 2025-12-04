@@ -6,7 +6,7 @@ keywords = ["compilation", "cargo", "fingerprint", "helper", "tool"]
 license = "MIT"
 name = "cargo-dirty"
 repository = "https://github.com/wvhulle/cargo-dirty"
-version = "0.0.2"
+version = "0.0.3"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }

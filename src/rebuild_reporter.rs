@@ -1,7 +1,9 @@
 use serde::Serialize;
 
-use crate::rebuild_graph::{RebuildGraph, RebuildNode, RootCauseChain, reason_dedup_key};
-use crate::rebuild_reason::RebuildReason;
+use crate::{
+    rebuild_graph::{RebuildGraph, RebuildNode, RootCauseChain, reason_dedup_key},
+    rebuild_reason::RebuildReason,
+};
 
 /// Tree node representing a rebuild cause with nested cascades
 #[derive(Debug, Serialize)]

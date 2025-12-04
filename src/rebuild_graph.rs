@@ -1,7 +1,8 @@
 //! Rebuild causality graph for tracking root causes of rebuilds
 //!
 //! Cargo's rebuild triggers form a directed acyclic graph where:
-//! - Root causes are nodes with no incoming edges (file changes, env var changes)
+//! - Root causes are nodes with no incoming edges (file changes, env var
+//!   changes)
 //! - `UnitDependencyInfoChanged` creates edges between dependent packages
 //! - Finding root causes means traversing back to nodes with in-degree 0
 
@@ -10,8 +11,9 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
-use crate::rebuild_reason::RebuildReason;
 use serde::Serialize;
+
+use crate::rebuild_reason::RebuildReason;
 
 /// Identifies a compilation unit in the rebuild graph
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -59,7 +61,8 @@ impl RebuildNode {
         Self { package, reason }
     }
 
-    /// Returns true if this is a root cause (not caused by another package rebuild)
+    /// Returns true if this is a root cause (not caused by another package
+    /// rebuild)
     #[must_use]
     pub const fn is_root_cause(&self) -> bool {
         !matches!(self.reason, RebuildReason::UnitDependencyInfoChanged { .. })
@@ -70,7 +73,8 @@ impl RebuildNode {
 ///
 /// Edges point from cause to effect:
 /// - Package A (root cause) -> Package B (depends on A)
-/// - An edge exists when Package B's rebuild reason is `UnitDependencyInfoChanged` mentioning A
+/// - An edge exists when Package B's rebuild reason is
+///   `UnitDependencyInfoChanged` mentioning A
 #[derive(Debug, Default)]
 pub struct RebuildGraph {
     nodes: Vec<RebuildNode>,
@@ -88,7 +92,8 @@ impl RebuildGraph {
         Self::default()
     }
 
-    /// Add a rebuild node to the graph, deduplicating by package name and reason
+    /// Add a rebuild node to the graph, deduplicating by package name and
+    /// reason
     pub fn add_node(&mut self, node: RebuildNode) -> Option<usize> {
         let package_name = extract_package_name(&node.package.package_id);
         let reason_key = reason_dedup_key(&node.reason);
@@ -257,7 +262,8 @@ fn extract_package_name(package_id: &str) -> String {
         .to_string()
 }
 
-/// Normalize a crate name for comparison (hyphens and underscores are equivalent)
+/// Normalize a crate name for comparison (hyphens and underscores are
+/// equivalent)
 fn normalize_crate_name(name: &str) -> String {
     name.replace('-', "_")
 }
@@ -280,11 +286,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identifies_root_causes() {
+    fn builds_and_analyzes_rebuild_graph() {
         let mut graph = RebuildGraph::new();
 
         graph.add_node(RebuildNode::new(
-            PackageTarget::new("libz-sys v1.1.23", Some("build-script-build".to_string())),
+            PackageTarget::new("libz-sys v1.1.23", None),
             RebuildReason::EnvVarChanged {
                 name: "CC".to_string(),
                 old_value: Some("gcc".to_string()),
@@ -307,30 +313,6 @@ mod tests {
         assert!(matches!(
             roots[0].reason,
             RebuildReason::EnvVarChanged { .. }
-        ));
-    }
-
-    #[test]
-    fn finds_causal_chains() {
-        let mut graph = RebuildGraph::new();
-
-        graph.add_node(RebuildNode::new(
-            PackageTarget::new("libz-sys v1.1.23", None),
-            RebuildReason::EnvVarChanged {
-                name: "CC".to_string(),
-                old_value: Some("gcc".to_string()),
-                new_value: None,
-            },
-        ));
-
-        graph.add_node(RebuildNode::new(
-            PackageTarget::new("rusqlite v0.31.0", None),
-            RebuildReason::UnitDependencyInfoChanged {
-                name: "libz-sys".to_string(),
-                old_fingerprint: "123".to_string(),
-                new_fingerprint: "456".to_string(),
-                context: None,
-            },
         ));
 
         let chains = graph.root_cause_chains();

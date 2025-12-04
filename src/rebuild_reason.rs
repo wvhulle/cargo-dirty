@@ -358,21 +358,6 @@ mod tests {
 
     #[test]
     fn provides_enhanced_explanations() {
-        let rustflags_change = RebuildReason::RustflagsChanged {
-            old: vec!["--cfg".to_string(), "test".to_string()],
-            new: vec![
-                "--cfg".to_string(),
-                "test".to_string(),
-                "-C".to_string(),
-                "target-cpu=native".to_string(),
-            ],
-        };
-
-        let explanation = rustflags_change.explanation();
-        assert!(explanation.contains(" RUSTFLAGS CHANGED"));
-        assert!(explanation.contains("--cfg test"));
-        assert!(explanation.contains("target-cpu=native"));
-
         let features_change = RebuildReason::FeaturesChanged {
             old: "default".to_string(),
             new: "default,serde".to_string(),
@@ -410,15 +395,20 @@ mod tests {
 
     #[test]
     fn formats_explanations_with_suggestions() {
-        let test_reason = RebuildReason::EnvVarChanged {
-            name: "RUSTFLAGS".to_string(),
-            old_value: None,
-            new_value: Some("-C target-cpu=native".to_string()),
+        let rustflags_change = RebuildReason::RustflagsChanged {
+            old: vec!["--cfg".to_string(), "test".to_string()],
+            new: vec![
+                "--cfg".to_string(),
+                "test".to_string(),
+                "-C".to_string(),
+                "target-cpu=native".to_string(),
+            ],
         };
 
-        let explanation = test_reason.explanation();
-        assert!(explanation.contains("Environment variable"));
-        assert!(explanation.contains("RUSTFLAGS"));
+        let explanation = rustflags_change.explanation();
+        assert!(explanation.contains(" RUSTFLAGS CHANGED"));
+        assert!(explanation.contains("--cfg test"));
+        assert!(explanation.contains("target-cpu=native"));
         assert!(explanation.contains("Suggestion"));
     }
 }

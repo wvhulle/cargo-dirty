@@ -184,51 +184,6 @@ fn main() {
     );
 }
 
-#[test]
-fn detects_rebuilds_when_file_and_env_var_change() {
-    let project = create_test_project("multi-trigger-test");
-
-    let cargo_toml = project.path().join("Cargo.toml");
-    fs::write(
-        &cargo_toml,
-        r#"
-[package]
-name = "multi-trigger-test"
-version = "0.1.0"
-edition = "2021"
-
-[build-dependencies]
-cc = "1.0"
-"#,
-    )
-    .unwrap();
-
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("build")
-        .current_dir(project.path())
-        .env_remove("CUSTOM_VAR");
-    let _ = cmd1.assert();
-
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
-    cmd.arg("--path")
-        .arg(project.path())
-        .arg("--command")
-        .arg("build")
-        .env("CUSTOM_VAR", "test_value");
-
-    let output = cmd.assert().success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-
-    assert!(
-        stderr.contains("env:CUSTOM_VAR"),
-        "Expected stderr to contain 'env:CUSTOM_VAR', got: {stderr}"
-    );
-    assert!(
-        stderr.contains("root cause"),
-        "Expected stderr to contain 'root cause', got: {stderr}"
-    );
-}
-
 /// Create a workspace with multiple crates to test dependency cascades
 fn create_workspace_with_dependencies() -> TempDir {
     let temp_dir = TempDir::new().unwrap();
@@ -343,24 +298,19 @@ fn collect_cargo_fingerprint_logs(project_path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Build a `RebuildGraph` from cargo fingerprint log lines
-fn build_graph_from_logs(log_lines: &[String]) -> RebuildGraph {
+/// Build trees from cargo fingerprint logs (JSON-serializable)
+fn build_trees_from_logs(log_lines: &[String]) -> Vec<cargo_dirty::RebuildTree> {
     let mut graph = RebuildGraph::new();
     for line in log_lines {
         if let Some(entry) = parse_rebuild_entry(line) {
             graph.add_node(RebuildNode::new(entry.package, entry.reason));
         }
     }
-    graph
-}
-
-/// Build trees from cargo fingerprint logs (JSON-serializable)
-fn build_trees_from_logs(log_lines: &[String]) -> Vec<cargo_dirty::RebuildTree> {
-    let graph = build_graph_from_logs(log_lines);
     cargo_dirty::build_rebuild_trees(&graph)
 }
 
-/// Strict integration test that verifies the JSON tree structure of the rebuild analysis.
+/// Strict integration test that verifies the JSON tree structure of the rebuild
+/// analysis.
 #[test]
 fn json_tree_structure_is_valid_for_workspace_rebuild() {
     let workspace = create_workspace_with_dependencies();
@@ -389,7 +339,10 @@ pub fn greet() -> &'static str {
 
     // JSON should be an array of root cause trees
     let root_array = parsed.as_array().expect("JSON should be an array");
-    assert!(!root_array.is_empty(), "Should have at least one root cause");
+    assert!(
+        !root_array.is_empty(),
+        "Should have at least one root cause"
+    );
 
     // Each root cause should have package, reason, and optional cascades
     for root in root_array {

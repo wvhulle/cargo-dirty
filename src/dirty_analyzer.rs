@@ -7,9 +7,11 @@ use std::{
 
 use log::debug;
 
-use crate::fingerprint_parser::parse_rebuild_entry;
-use crate::rebuild_graph::{RebuildGraph, RebuildNode};
-use crate::rebuild_reporter::{print_rebuild_analysis, print_rebuild_analysis_json};
+use crate::{
+    fingerprint_parser::parse_rebuild_entry,
+    rebuild_graph::{RebuildGraph, RebuildNode},
+    rebuild_reporter::{print_rebuild_analysis, print_rebuild_analysis_json},
+};
 
 /// Analyzes dirty reasons for cargo rebuilds
 ///
