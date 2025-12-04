@@ -1,18 +1,15 @@
 use std::{
     error::Error,
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::Path,
     process::{ChildStderr, Command, Stdio},
 };
 
 use log::debug;
 
-use crate::parsing::parser::parse_rebuild_entry;
-
-use super::{
-    graph::{RebuildGraph, RebuildNode},
-    reporter::{print_rebuild_analysis, print_rebuild_analysis_json},
-};
+use crate::fingerprint_parser::parse_rebuild_entry;
+use crate::rebuild_graph::{RebuildGraph, RebuildNode};
+use crate::rebuild_reporter::{print_rebuild_analysis, print_rebuild_analysis_json};
 
 /// Analyzes dirty reasons for cargo rebuilds
 ///
@@ -23,7 +20,7 @@ use super::{
 /// - The cargo command fails to spawn
 /// - Log analysis fails
 pub fn analyze_dirty_reasons(
-    project_path: &PathBuf,
+    project_path: &Path,
     cargo_command: &str,
     json_output: bool,
 ) -> Result<(), Box<dyn Error>> {

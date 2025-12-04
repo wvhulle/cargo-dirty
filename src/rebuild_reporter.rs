@@ -1,8 +1,7 @@
 use serde::Serialize;
 
-use crate::parsing::rebuild_reason::RebuildReason;
-
-use super::graph::{RebuildGraph, RebuildNode, RootCauseChain};
+use crate::rebuild_graph::{RebuildGraph, RebuildNode, RootCauseChain, reason_dedup_key};
+use crate::rebuild_reason::RebuildReason;
 
 /// Tree node representing a rebuild cause with nested cascades
 #[derive(Debug, Serialize)]
@@ -17,30 +16,17 @@ impl RebuildTree {
     fn from_chain(chain: &RootCauseChain) -> Self {
         Self {
             package: chain.root_cause.package.package_id.clone(),
-            reason: format_reason(&chain.root_cause.reason),
+            reason: reason_dedup_key(&chain.root_cause.reason),
             cascades: chain
                 .affected_packages
                 .iter()
                 .map(|node| Self {
                     package: node.package.package_id.clone(),
-                    reason: format_reason(&node.reason),
+                    reason: reason_dedup_key(&node.reason),
                     cascades: Vec::new(),
                 })
                 .collect(),
         }
-    }
-}
-
-fn format_reason(reason: &RebuildReason) -> String {
-    match reason {
-        RebuildReason::EnvVarChanged { name, .. } => format!("env:{name}"),
-        RebuildReason::FileChanged { path } => format!("file:{path}"),
-        RebuildReason::UnitDependencyInfoChanged { name, .. } => format!("dep:{name}"),
-        RebuildReason::TargetConfigurationChanged => "config".to_string(),
-        RebuildReason::ProfileConfigurationChanged => "profile".to_string(),
-        RebuildReason::RustflagsChanged { .. } => "rustflags".to_string(),
-        RebuildReason::FeaturesChanged { .. } => "features".to_string(),
-        RebuildReason::Unknown(msg) => format!("unknown:{msg}"),
     }
 }
 
@@ -88,7 +74,7 @@ impl RebuildAnalysis {
     /// Build analysis from a `RebuildGraph`
     #[must_use]
     pub fn from_graph(graph: &RebuildGraph) -> Self {
-        let root_causes: Vec<_> = graph.root_causes().iter().map(|n| (*n).clone()).collect();
+        let root_causes: Vec<_> = graph.root_causes().iter().copied().cloned().collect();
         let root_cause_count = root_causes.len();
         let total_rebuilds = graph.len();
         let cascade_count = total_rebuilds - root_cause_count;

@@ -13,7 +13,7 @@ use nom::{
 };
 
 use crate::RebuildReason;
-use crate::analysis::graph::PackageTarget;
+use crate::rebuild_graph::PackageTarget;
 
 /// A parsed rebuild entry with package context and reason
 #[derive(Debug, Clone)]
@@ -46,20 +46,21 @@ fn extract_package_context(line: &str) -> PackageTarget {
 
     let target = line.find("target=").and_then(|target_start| {
         let after_target = &line[target_start + 7..];
-        after_target.strip_prefix('"').map_or_else(
-            || {
-                let end = after_target
-                    .find([' ', '}', ':'])
-                    .unwrap_or(after_target.len());
-                let value = after_target[..end].trim();
-                if value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                }
-            },
-            |stripped| stripped.find('"').map(|quote_end| stripped[..quote_end].to_string()),
-        )
+
+        if let Some(stripped) = after_target.strip_prefix('"') {
+            return stripped.find('"').map(|quote_end| stripped[..quote_end].to_string());
+        }
+
+        let end = after_target
+            .find([' ', '}', ':'])
+            .unwrap_or(after_target.len());
+        let value = after_target[..end].trim();
+
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
     });
 
     PackageTarget::new(package_id, target)
@@ -236,9 +237,13 @@ fn parse_fs_status_outdated_changed_file(input: &str) -> IResult<&str, RebuildRe
 // Parse FsStatusOutdated(StaleDepFingerprint { name: "..." })
 fn parse_fs_status_outdated_stale_dep(input: &str) -> IResult<&str, RebuildReason> {
     let (input, _) = tag("FsStatusOutdated")(input)?;
-    let (input, _) = tuple((char('('), tag("StaleDepFingerprint"), space0, char('{'), space0))(
-        input,
-    )?;
+    let (input, _) = tuple((
+        char('('),
+        tag("StaleDepFingerprint"),
+        space0,
+        char('{'),
+        space0,
+    ))(input)?;
 
     let (input, _) = tuple((tag("name"), space0, char(':'), space0))(input)?;
     let (input, name) = parse_quoted_string(input)?;
@@ -305,7 +310,8 @@ mod tests {
 
     #[test]
     fn handles_missing_package_context() {
-        let log_line = r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
+        let log_line =
+            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
 
         let entry = parse_rebuild_entry(log_line).unwrap();
         assert_eq!(entry.package.package_id, "unknown");
@@ -319,5 +325,141 @@ mod tests {
         let entry = parse_rebuild_entry(log_line).unwrap();
         assert_eq!(entry.package.package_id, "serde v1.0.0");
         assert_eq!(entry.package.target, None);
+    }
+
+    #[test]
+    fn handles_env_var_changed_with_some_to_none() {
+        let log_line =
+            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::EnvVarChanged {
+                name: "CC".to_string(),
+                old_value: Some("gcc".to_string()),
+                new_value: None,
+            })
+        );
+    }
+
+    #[test]
+    fn handles_env_var_changed_with_none_to_some() {
+        let log_line =
+            r#"dirty: EnvVarChanged { name: "RUST_LOG", old_value: None, new_value: Some("debug") }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::EnvVarChanged {
+                name: "RUST_LOG".to_string(),
+                old_value: None,
+                new_value: Some("debug".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn handles_env_var_changed_with_complex_paths() {
+        let log_line = r#"dirty: EnvVarChanged { name: "PATH", old_value: Some("/usr/bin:/bin"), new_value: Some("/nix/store/abc:/usr/bin:/bin") }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::EnvVarChanged {
+                name: "PATH".to_string(),
+                old_value: Some("/usr/bin:/bin".to_string()),
+                new_value: Some("/nix/store/abc:/usr/bin:/bin".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn handles_unit_dependency_info_changed() {
+        let log_line = r#"dirty: UnitDependencyInfoChanged { old_name: "rusqlite", old_fingerprint: 5920731552898212716, new_name: "rusqlite", new_fingerprint: 7766129310588964256 }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::UnitDependencyInfoChanged {
+                name: "rusqlite".to_string(),
+                old_fingerprint: "5920731552898212716".to_string(),
+                new_fingerprint: "7766129310588964256".to_string(),
+                context: None,
+            })
+        );
+    }
+
+    #[test]
+    fn handles_target_configuration_changed() {
+        let log_line = r"dirty: TargetConfigurationChanged";
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(result, Some(RebuildReason::TargetConfigurationChanged));
+    }
+
+    #[test]
+    fn handles_fs_status_outdated_with_file_change() {
+        let log_line = r#"dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/tmp/.tmp6t5LHE/target/debug/.fingerprint/target-test-d08e845c3c592b51/dep-bin-target-test", reference_mtime: FileTime { seconds: 1763310414, nanos: 599971397 }, stale: "/tmp/.tmp6t5LHE/src/main.rs", stale_mtime: FileTime { seconds: 1763310414, nanos: 663971117 } }))"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::FileChanged {
+                path: "/tmp/.tmp6t5LHE/src/main.rs".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn extracts_reason_from_complex_cargo_log_line() {
+        let log_line = r#"    0.102058909s  INFO prepare_target{force=false package_id=libz-sys v1.1.23 target="build-script-build"}: cargo::core::compiler::fingerprint:     dirty: EnvVarChanged { name: "CC", old_value: Some("gcc"), new_value: None }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        if let Some(RebuildReason::EnvVarChanged {
+            name,
+            old_value,
+            new_value,
+        }) = result
+        {
+            assert_eq!(name, "CC");
+            assert_eq!(old_value, Some("gcc".to_string()));
+            assert_eq!(new_value, None);
+        } else {
+            panic!("Expected EnvVarChanged, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn returns_none_for_unknown_dirty_reason_format() {
+        let log_line = r#"dirty: SomeUnknownReason { data: "value" }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn returns_none_for_lines_without_dirty_marker() {
+        let log_line =
+            r"    0.102058909s  INFO cargo::core::compiler::fingerprint: some other log message";
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn handles_malformed_input_gracefully() {
+        let malformed_lines = vec![
+            r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc")"#,
+            r#"dirty: EnvVarChanged { name: CC", old_value: Some("gcc"), new_value: None }"#,
+            r#"dirty: UnitDependencyInfoChanged { old_name: "rusqlite""#,
+            r"dirty:",
+            r"",
+        ];
+
+        for line in malformed_lines {
+            let result = parse_rebuild_reason(line);
+            assert_eq!(result, None, "Expected None for malformed line: {line}");
+        }
     }
 }

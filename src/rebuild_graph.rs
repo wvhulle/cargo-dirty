@@ -10,7 +10,7 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
-use crate::parsing::rebuild_reason::RebuildReason;
+use crate::rebuild_reason::RebuildReason;
 use serde::Serialize;
 
 /// Identifies a compilation unit in the rebuild graph
@@ -78,7 +78,7 @@ pub struct RebuildGraph {
     dependency_causes: HashMap<String, Vec<usize>>,
     /// Map from package to its node index
     package_to_node: HashMap<PackageTarget, usize>,
-    /// Track seen (package_name, reason_key) to deduplicate
+    /// Track seen (`package_name`, `reason_key`) to deduplicate
     seen_entries: HashSet<(String, String)>,
 }
 
@@ -134,7 +134,6 @@ impl RebuildGraph {
             return chain;
         }
 
-        // This is a root cause or we couldn't find the cause
         vec![node]
     }
 
@@ -182,9 +181,10 @@ impl RebuildGraph {
 
             if let RebuildReason::UnitDependencyInfoChanged { name, .. } = &node.reason {
                 let dep_name_normalized = normalize_crate_name(name);
-                if dep_name_normalized == root_name_normalized
-                    || self.is_transitively_affected(name, &root_name)
-                {
+                let is_affected = dep_name_normalized == root_name_normalized
+                    || self.is_transitively_affected(name, &root_name);
+
+                if is_affected {
                     affected.push(node.clone());
                     visited.insert(idx);
                 }
@@ -202,14 +202,16 @@ impl RebuildGraph {
             let package_name = extract_package_name(&node.package.package_id);
             let package_name_normalized = normalize_crate_name(&package_name);
             let dep_name_normalized = normalize_crate_name(dep_name);
-            if package_name_normalized == dep_name_normalized
-                && let RebuildReason::UnitDependencyInfoChanged { name, .. } = &node.reason
-            {
+
+            if package_name_normalized != dep_name_normalized {
+                continue;
+            }
+
+            if let RebuildReason::UnitDependencyInfoChanged { name, .. } = &node.reason {
                 let name_normalized = normalize_crate_name(name);
                 if name_normalized == root_name_normalized {
                     return true;
                 }
-                // Recursively check
                 if self.is_transitively_affected(name, root_name) {
                     return true;
                 }
@@ -260,8 +262,7 @@ fn normalize_crate_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// Generate a deduplication key for a rebuild reason
-fn reason_dedup_key(reason: &RebuildReason) -> String {
+pub fn reason_dedup_key(reason: &RebuildReason) -> String {
     match reason {
         RebuildReason::EnvVarChanged { name, .. } => format!("env:{name}"),
         RebuildReason::FileChanged { path } => format!("file:{path}"),
