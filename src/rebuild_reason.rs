@@ -322,7 +322,18 @@ impl Display for RebuildReason {
             Self::FeaturesChanged { old, new } => write!(f, "features: {old} -> {new}"),
             Self::ProfileConfigurationChanged => write!(f, "profile changed"),
             Self::TargetConfigurationChanged => write!(f, "target config changed"),
-            Self::FileChanged { path } => write!(f, "file:{path}"),
+            Self::FileChanged { path } => {
+                let short_path = path
+                    .split('/')
+                    .rev()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("/");
+                write!(f, "file:{short_path}")
+            }
             Self::Unknown(msg) => write!(f, "unknown:{msg}"),
         }
     }

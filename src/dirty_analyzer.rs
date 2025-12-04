@@ -32,7 +32,7 @@ pub fn analyze_dirty_reasons(
     }
 
     eprintln!("Analyzing: {}", project_path.display());
-    eprintln!("Running: cargo {cargo_command}\n");
+    eprintln!("Running: cargo {cargo_command}");
 
     let args: Vec<&str> = cargo_command.split_whitespace().collect();
     let (cmd, cmd_args) = args.split_first().ok_or("Empty cargo command")?;

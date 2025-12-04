@@ -41,9 +41,15 @@ impl PackageTarget {
 
 impl Display for PackageTarget {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let package_name = self
+            .package_id
+            .split_whitespace()
+            .next()
+            .unwrap_or(&self.package_id);
+
         match &self.target {
-            Some(target) => write!(f, "{} ({})", self.package_id, target),
-            None => write!(f, "{}", self.package_id),
+            Some(target) => write!(f, "{package_name} [{target}]"),
+            None => write!(f, "{package_name}"),
         }
     }
 }
