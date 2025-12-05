@@ -1,98 +1,139 @@
 use std::{
-    error::Error,
+    env,
     io::{BufRead, BufReader},
-    path::Path,
+    path::PathBuf,
     process::{ChildStderr, Command, Stdio},
 };
 
-use log::debug;
+use clap::Parser;
+use log::{debug, info};
 
 use crate::{
+    AnalyzerError,
     fingerprint_parser::parse_rebuild_entry,
     rebuild_graph::{RebuildGraph, RebuildNode},
 };
 
-/// Analyzes dirty reasons for cargo rebuilds
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Cargo.toml is not found at the project path
-/// - The cargo command fails to spawn
-/// - Log analysis fails
-pub fn analyze_dirty_reasons(
-    project_path: &Path,
-    cargo_command: &str,
-    json_output: bool,
-) -> Result<(), Box<dyn Error>> {
-    let cargo_toml = project_path.join("Cargo.toml");
-    if !cargo_toml.exists() {
-        return Err(format!("Cargo.toml not found at {}", cargo_toml.display()).into());
-    }
+#[derive(Parser, Debug)]
+#[command(author, version, about = "Analyze what causes cargo rebuilds", long_about = None)]
+pub struct Config {
+    #[arg(short, long, help = "Path to cargo project", default_value = ".")]
+    path: PathBuf,
 
-    eprintln!("Analyzing: {}", project_path.display());
-    eprintln!("Running: cargo {cargo_command}");
+    #[arg(short, long, help = "Verbose output")]
+    verbose: bool,
 
-    let args: Vec<&str> = cargo_command.split_whitespace().collect();
-    let (cmd, cmd_args) = args.split_first().ok_or("Empty cargo command")?;
+    #[arg(long, help = "Output analysis as JSON")]
+    json: bool,
 
-    let output = Command::new("cargo")
-        .arg(cmd)
-        .args(cmd_args)
-        .current_dir(project_path)
-        .env("CARGO_LOG", "cargo::core::compiler::fingerprint=info")
-        .env("RUST_LOG", "debug")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    #[arg(long, help = "Cargo command to analyze", default_value = "check")]
+    command: String,
 
-    if let Some(stderr) = output.stderr {
-        let reader = BufReader::new(stderr);
-        analyze_cargo_logs(reader, json_output)?;
-    }
-
-    Ok(())
+    #[arg(help = "Additional arguments to pass to cargo", last = true)]
+    cargo_args: Vec<String>,
 }
 
-/// Analyzes cargo log output for rebuild reasons and builds a causality graph
-///
-/// # Errors
-///
-/// Returns an error if reading from the stderr stream fails
-pub fn analyze_cargo_logs(
-    reader: BufReader<ChildStderr>,
-    json_output: bool,
-) -> Result<(), Box<dyn Error>> {
-    let mut graph = RebuildGraph::new();
+impl Config {
+    #[must_use]
+    pub fn parse_args() -> Self {
+        if env::args().nth(1).as_deref() == Some("dirty") {
+            Self::parse_from(env::args().take(1).chain(env::args().skip(2)))
+        } else {
+            Self::parse()
+        }
+    }
 
-    for line in reader.lines() {
-        let line = line?;
-        debug!("Cargo log: {line}");
+    pub fn init_logging(&self) {
+        if self.verbose {
+            env_logger::Builder::from_default_env()
+                .filter_level(log::LevelFilter::Debug)
+                .init();
+        } else {
+            env_logger::init();
+        }
+    }
 
-        if line.contains("fingerprint") && (line.contains("dirty:") || line.contains("stale:")) {
-            debug!("Rebuild trigger detected: {line}");
-            if let Some(entry) = parse_rebuild_entry(&line) {
-                graph.add_node(RebuildNode::new(entry.package, entry.reason));
+    fn cargo_command(&self) -> String {
+        if self.cargo_args.is_empty() {
+            self.command.clone()
+        } else {
+            format!("{} {}", self.command, self.cargo_args.join(" "))
+        }
+    }
+
+    pub fn run(&self) -> Result<(), AnalyzerError> {
+        let cargo_command = self.cargo_command();
+
+        let cargo_toml = self.path.join("Cargo.toml");
+        if !cargo_toml.exists() {
+            return Err(AnalyzerError::CargoTomlNotFound(cargo_toml));
+        }
+
+        info!("Analyzing cargo project at: {}", self.path.display());
+        eprintln!("Analyzing: {}", self.path.display());
+        eprintln!("Running: cargo {cargo_command}");
+
+        let args: Vec<&str> = cargo_command.split_whitespace().collect();
+        let (cmd, cmd_args) = args.split_first().ok_or(AnalyzerError::EmptyCommand)?;
+
+        let output = Command::new("cargo")
+            .arg(cmd)
+            .args(cmd_args)
+            .current_dir(&self.path)
+            .env("CARGO_LOG", "cargo::core::compiler::fingerprint=info")
+            .env("RUST_LOG", "debug")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        if let Some(stderr) = output.stderr {
+            let reader = BufReader::new(stderr);
+            self.analyze_logs(reader)?;
+        }
+
+        Ok(())
+    }
+
+    fn analyze_logs(&self, reader: BufReader<ChildStderr>) -> Result<(), AnalyzerError> {
+        let mut graph = RebuildGraph::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            debug!("Cargo log: {line}");
+
+            if line.contains("fingerprint") && (line.contains("dirty:") || line.contains("stale:"))
+            {
+                debug!("Rebuild trigger detected: {line}");
+                if let Some(entry) = parse_rebuild_entry(&line) {
+                    graph.add_node(RebuildNode::new(entry.package, entry.reason));
+                }
+            }
+
+            if line.contains("recompiling") || line.contains("compiling") {
+                debug!("Compilation: {line}");
             }
         }
 
-        if line.contains("recompiling") || line.contains("compiling") {
-            debug!("Compilation: {line}");
-        }
-    }
-
-    if graph.is_empty() {
-        if json_output {
-            println!("[]");
+        if self.json {
+            println!("{}", graph.to_json()?);
         } else {
-            eprintln!("No rebuild reasons detected - incremental build with no changes");
-            eprintln!("Cargo's incremental compilation is working effectively");
-        }
-    } else if json_output {
-        graph.print_json()?;
-    } else {
-        graph.print_analysis();
-    }
+            let root_causes = graph.root_causes();
 
-    Ok(())
+            if root_causes.is_empty() {
+                eprintln!("No rebuild triggers detected.");
+            } else {
+                eprintln!(
+                    "\n{} root cause{}:",
+                    root_causes.len(),
+                    if root_causes.len() == 1 { "" } else { "s" }
+                );
+
+                for root in &root_causes {
+                    eprintln!("  {} {}", root.package, root.reason);
+                }
+            }
+        }
+
+        Ok(())
+    }
 }

@@ -199,47 +199,12 @@ impl RebuildGraph {
         false
     }
 
-    /// Check if the graph is empty
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
     /// Serialize the graph to a JSON string
     ///
     /// # Errors
     /// Returns error if serialization fails
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(&self.root_cause_chains())
-    }
-
-    /// Print the graph as JSON to stdout
-    ///
-    /// # Errors
-    /// Returns error if serialization fails
-    pub fn print_json(&self) -> Result<(), serde_json::Error> {
-        println!("{}", self.to_json()?);
-        Ok(())
-    }
-
-    /// Print a human-readable analysis to stderr
-    pub fn print_analysis(&self) {
-        let root_causes = self.root_causes();
-
-        if root_causes.is_empty() {
-            eprintln!("No rebuild triggers detected.");
-            return;
-        }
-
-        eprintln!(
-            "\n{} root cause{}:",
-            root_causes.len(),
-            if root_causes.len() == 1 { "" } else { "s" }
-        );
-
-        for root in &root_causes {
-            eprintln!("  {} {}", root.package, root.reason);
-        }
     }
 }
 
