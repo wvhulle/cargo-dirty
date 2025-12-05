@@ -10,7 +10,6 @@ use log::debug;
 use crate::{
     fingerprint_parser::parse_rebuild_entry,
     rebuild_graph::{RebuildGraph, RebuildNode},
-    rebuild_reporter::{print_rebuild_analysis, print_rebuild_analysis_json},
 };
 
 /// Analyzes dirty reasons for cargo rebuilds
@@ -90,9 +89,9 @@ pub fn analyze_cargo_logs(
             eprintln!("Cargo's incremental compilation is working effectively");
         }
     } else if json_output {
-        print_rebuild_analysis_json(&graph)?;
+        graph.print_json()?;
     } else {
-        print_rebuild_analysis(&graph);
+        graph.print_analysis();
     }
 
     Ok(())

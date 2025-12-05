@@ -29,14 +29,6 @@ impl PackageTarget {
             target,
         }
     }
-
-    #[must_use]
-    pub fn unknown() -> Self {
-        Self {
-            package_id: "unknown".to_string(),
-            target: None,
-        }
-    }
 }
 
 impl Display for PackageTarget {
@@ -102,7 +94,7 @@ impl RebuildGraph {
     /// reason
     pub fn add_node(&mut self, node: RebuildNode) -> Option<usize> {
         let package_name = extract_package_name(&node.package.package_id);
-        let reason_key = reason_dedup_key(&node.reason);
+        let reason_key = node.reason.to_string();
         let entry_key = (package_name.clone(), reason_key);
 
         if !self.seen_entries.insert(entry_key) {
@@ -128,30 +120,6 @@ impl RebuildGraph {
     #[must_use]
     pub fn root_causes(&self) -> Vec<&RebuildNode> {
         self.nodes.iter().filter(|n| n.is_root_cause()).collect()
-    }
-
-    /// Find the causal chain for a given node
-    /// Returns nodes in order from root cause to the given node
-    #[must_use]
-    pub fn causal_chain(&self, node_idx: usize) -> Vec<&RebuildNode> {
-        let node = &self.nodes[node_idx];
-
-        if let RebuildReason::UnitDependencyInfoChanged { name, .. } = &node.reason
-            && let Some(cause_indices) = self.dependency_causes.get(name)
-            && let Some(&cause_idx) = cause_indices.first()
-        {
-            let mut chain = self.causal_chain(cause_idx);
-            chain.push(node);
-            return chain;
-        }
-
-        vec![node]
-    }
-
-    /// Get all nodes in the graph
-    #[must_use]
-    pub fn nodes(&self) -> &[RebuildNode] {
-        &self.nodes
     }
 
     /// Find root causes with their full downstream impact chains
@@ -237,10 +205,41 @@ impl RebuildGraph {
         self.nodes.is_empty()
     }
 
-    /// Get the number of nodes
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.nodes.len()
+    /// Serialize the graph to a JSON string
+    ///
+    /// # Errors
+    /// Returns error if serialization fails
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.root_cause_chains())
+    }
+
+    /// Print the graph as JSON to stdout
+    ///
+    /// # Errors
+    /// Returns error if serialization fails
+    pub fn print_json(&self) -> Result<(), serde_json::Error> {
+        println!("{}", self.to_json()?);
+        Ok(())
+    }
+
+    /// Print a human-readable analysis to stderr
+    pub fn print_analysis(&self) {
+        let root_causes = self.root_causes();
+
+        if root_causes.is_empty() {
+            eprintln!("No rebuild triggers detected.");
+            return;
+        }
+
+        eprintln!(
+            "\n{} root cause{}:",
+            root_causes.len(),
+            if root_causes.len() == 1 { "" } else { "s" }
+        );
+
+        for root in &root_causes {
+            eprintln!("  {} {}", root.package, root.reason);
+        }
     }
 }
 
@@ -254,6 +253,7 @@ pub struct RootCauseChain {
 impl RootCauseChain {
     /// Total number of rebuilds caused (root + affected)
     #[must_use]
+    #[cfg(test)]
     pub const fn total_rebuilds(&self) -> usize {
         1 + self.affected_packages.len()
     }
@@ -274,22 +274,19 @@ fn normalize_crate_name(name: &str) -> String {
     name.replace('-', "_")
 }
 
-pub fn reason_dedup_key(reason: &RebuildReason) -> String {
-    match reason {
-        RebuildReason::EnvVarChanged { name, .. } => format!("env:{name}"),
-        RebuildReason::FileChanged { path } => format!("file:{path}"),
-        RebuildReason::UnitDependencyInfoChanged { name, .. } => format!("dep:{name}"),
-        RebuildReason::TargetConfigurationChanged => "config".to_string(),
-        RebuildReason::ProfileConfigurationChanged => "profile".to_string(),
-        RebuildReason::RustflagsChanged { .. } => "rustflags".to_string(),
-        RebuildReason::FeaturesChanged { .. } => "features".to_string(),
-        RebuildReason::Unknown(msg) => format!("unknown:{msg}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::Path,
+        process::{Command, Stdio},
+    };
+
+    use assert_cmd::prelude::*;
+    use tempfile::TempDir;
+
     use super::*;
+    use crate::fingerprint_parser::parse_rebuild_entry;
 
     #[test]
     fn builds_and_analyzes_rebuild_graph() {
@@ -324,5 +321,191 @@ mod tests {
         let chains = graph.root_cause_chains();
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].total_rebuilds(), 2);
+    }
+
+    fn create_workspace_with_dependencies() -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(
+            temp_dir.path().join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["lib-a", "lib-b", "app"]
+resolver = "2"
+"#,
+        )
+        .unwrap();
+
+        let lib_a_dir = temp_dir.path().join("lib-a");
+        fs::create_dir_all(lib_a_dir.join("src")).unwrap();
+        fs::write(
+            lib_a_dir.join("Cargo.toml"),
+            r#"
+[package]
+name = "lib-a"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            lib_a_dir.join("src/lib.rs"),
+            r#"
+pub fn greet() -> &'static str {
+    "Hello from lib-a"
+}
+"#,
+        )
+        .unwrap();
+
+        let middle_lib_dir = temp_dir.path().join("lib-b");
+        fs::create_dir_all(middle_lib_dir.join("src")).unwrap();
+        fs::write(
+            middle_lib_dir.join("Cargo.toml"),
+            r#"
+[package]
+name = "lib-b"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lib-a = { path = "../lib-a" }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            middle_lib_dir.join("src/lib.rs"),
+            r#"
+pub fn message() -> String {
+    format!("lib-b says: {}", lib_a::greet())
+}
+"#,
+        )
+        .unwrap();
+
+        let app_dir = temp_dir.path().join("app");
+        fs::create_dir_all(app_dir.join("src")).unwrap();
+        fs::write(
+            app_dir.join("Cargo.toml"),
+            r#"
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lib-b = { path = "../lib-b" }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            app_dir.join("src/main.rs"),
+            r#"
+fn main() {
+    println!("{}", lib_b::message());
+}
+"#,
+        )
+        .unwrap();
+
+        temp_dir
+    }
+
+    fn collect_cargo_fingerprint_logs(project_path: &Path) -> Vec<String> {
+        let output = Command::new("cargo")
+            .arg("build")
+            .current_dir(project_path)
+            .env("CARGO_LOG", "cargo::core::compiler::fingerprint=info")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("Failed to run cargo build");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        stderr
+            .lines()
+            .filter(|line| {
+                line.contains("fingerprint") && (line.contains("dirty:") || line.contains("stale:"))
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    fn build_graph_from_logs(log_lines: &[String]) -> RebuildGraph {
+        let mut graph = RebuildGraph::new();
+        for line in log_lines {
+            if let Some(entry) = parse_rebuild_entry(line) {
+                graph.add_node(RebuildNode::new(entry.package, entry.reason));
+            }
+        }
+        graph
+    }
+
+    #[test]
+    fn json_structure_is_valid_for_workspace_rebuild() {
+        let workspace = create_workspace_with_dependencies();
+
+        let mut build_cmd = Command::new("cargo");
+        build_cmd.arg("build").current_dir(workspace.path());
+        build_cmd.assert().success();
+
+        let lib_a_src = workspace.path().join("lib-a/src/lib.rs");
+        fs::write(
+            &lib_a_src,
+            r#"
+pub fn greet() -> &'static str {
+    "Hello from modified lib-a!"
+}
+"#,
+        )
+        .unwrap();
+
+        let log_lines = collect_cargo_fingerprint_logs(workspace.path());
+        let graph = build_graph_from_logs(&log_lines);
+
+        let json = graph.to_json().expect("JSON serialization should succeed");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("JSON should be valid and parseable");
+
+        let root_array = parsed.as_array().expect("JSON should be an array");
+        assert!(
+            !root_array.is_empty(),
+            "Should have at least one root cause"
+        );
+
+        for root in root_array {
+            assert!(
+                root.get("root_cause").is_some(),
+                "Root should have root_cause"
+            );
+
+            let root_cause = &root["root_cause"];
+            let reason = &root_cause["reason"];
+            assert!(
+                reason.get("UnitDependencyInfoChanged").is_none(),
+                "Root cause should not be a dependency change: {reason}"
+            );
+
+            if let Some(affected) = root.get("affected_packages") {
+                let affected_arr = affected.as_array().unwrap();
+                for pkg in affected_arr {
+                    let pkg_reason = &pkg["reason"];
+                    assert!(
+                        pkg_reason.get("UnitDependencyInfoChanged").is_some(),
+                        "Affected package should be a dependency change: {pkg_reason}"
+                    );
+                }
+            }
+        }
+
+        let has_lib_a_root = root_array.iter().any(|r| {
+            r["root_cause"]["package"]["package_id"]
+                .as_str()
+                .is_some_and(|p| p.contains("lib-a"))
+        });
+        assert!(
+            has_lib_a_root,
+            "lib-a should be identified as a root cause since we modified it"
+        );
     }
 }

@@ -9,10 +9,11 @@ use nom::{
     bytes::complete::{tag, take_until},
     character::complete::{char, digit1, space0},
     combinator::map,
+    error::Error,
     sequence::{delimited, preceded, terminated, tuple},
 };
 
-use crate::{RebuildReason, rebuild_graph::PackageTarget};
+use crate::{rebuild_graph::PackageTarget, rebuild_reason::RebuildReason};
 
 /// A parsed rebuild entry with package context and reason
 #[derive(Debug, Clone)]
@@ -175,6 +176,76 @@ fn parse_target_configuration_changed(input: &str) -> IResult<&str, RebuildReaso
     Ok((input, RebuildReason::TargetConfigurationChanged))
 }
 
+// Parse ProfileConfigurationChanged
+fn parse_profile_configuration_changed(input: &str) -> IResult<&str, RebuildReason> {
+    let (input, _) = tag("ProfileConfigurationChanged")(input)?;
+    Ok((input, RebuildReason::ProfileConfigurationChanged))
+}
+
+// Parse a Vec<String>: [elem1, elem2, ...]
+fn parse_string_vec(input: &str) -> IResult<&str, Vec<String>> {
+    let (input, _) = char('[')(input)?;
+    let (input, _) = space0(input)?;
+
+    let mut result = Vec::new();
+    let mut input = input;
+
+    loop {
+        input = space0(input)?.0;
+
+        if let Ok((rest, _)) = char::<&str, Error<&str>>(']')(input) {
+            return Ok((rest, result));
+        }
+
+        let (rest, s) = parse_quoted_string(input)?;
+        result.push(s);
+        input = rest;
+
+        input = space0(input)?.0;
+
+        if let Ok((rest, _)) = char::<&str, Error<&str>>(']')(input) {
+            return Ok((rest, result));
+        }
+
+        let (rest, _) = char(',')(input)?;
+        input = rest;
+    }
+}
+
+// Parse RustflagsChanged { old: [...], new: [...] }
+fn parse_rustflags_changed(input: &str) -> IResult<&str, RebuildReason> {
+    let (input, _) = tag("RustflagsChanged")(input)?;
+    let (input, _) = tuple((space0, char('{'), space0))(input)?;
+
+    let (input, _) = tuple((tag("old"), space0, char(':'), space0))(input)?;
+    let (input, old) = parse_string_vec(input)?;
+    let (input, ()) = parse_comma(input)?;
+
+    let (input, _) = tuple((tag("new"), space0, char(':'), space0))(input)?;
+    let (input, new) = parse_string_vec(input)?;
+
+    let (input, _) = tuple((space0, char('}')))(input)?;
+
+    Ok((input, RebuildReason::RustflagsChanged { old, new }))
+}
+
+// Parse FeaturesChanged { old: "...", new: "..." }
+fn parse_features_changed(input: &str) -> IResult<&str, RebuildReason> {
+    let (input, _) = tag("FeaturesChanged")(input)?;
+    let (input, _) = tuple((space0, char('{'), space0))(input)?;
+
+    let (input, _) = tuple((tag("old"), space0, char(':'), space0))(input)?;
+    let (input, old) = parse_quoted_string(input)?;
+    let (input, ()) = parse_comma(input)?;
+
+    let (input, _) = tuple((tag("new"), space0, char(':'), space0))(input)?;
+    let (input, new) = parse_quoted_string(input)?;
+
+    let (input, _) = tuple((space0, char('}')))(input)?;
+
+    Ok((input, RebuildReason::FeaturesChanged { old, new }))
+}
+
 // Parse FileTime { seconds: 123, nanos: 456 }
 fn parse_file_time(input: &str) -> IResult<&str, (String, String)> {
     let (input, _) = tag("FileTime")(input)?;
@@ -269,9 +340,20 @@ fn parse_dirty_reason_content(input: &str) -> IResult<&str, RebuildReason> {
         parse_env_var_changed,
         parse_unit_dependency_info_changed,
         parse_target_configuration_changed,
+        parse_profile_configuration_changed,
+        parse_rustflags_changed,
+        parse_features_changed,
         parse_fs_status_outdated_stale_dep,
         parse_fs_status_outdated_changed_file,
+        parse_unknown_reason,
     ))(input)
+}
+
+// Fallback parser for unknown/unrecognized dirty reasons
+#[allow(clippy::unnecessary_wraps, reason = "Needed for nom parser combinator")]
+fn parse_unknown_reason(input: &str) -> IResult<&str, RebuildReason> {
+    let content = input.trim().to_string();
+    Ok(("", RebuildReason::Unknown(content)))
 }
 
 // Parse the full "dirty: <reason>" pattern
@@ -398,11 +480,71 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_unknown_dirty_reason_format() {
+    fn handles_unknown_dirty_reason_format() {
         let log_line = r#"dirty: SomeUnknownReason { data: "value" }"#;
         let result = parse_rebuild_reason(log_line);
 
-        assert_eq!(result, None);
+        assert_eq!(
+            result,
+            Some(RebuildReason::Unknown(
+                r#"SomeUnknownReason { data: "value" }"#.to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn handles_rustflags_changed() {
+        let log_line = r#"dirty: RustflagsChanged { old: ["--cfg", "test"], new: ["--cfg", "test", "-C", "target-cpu=native"] }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::RustflagsChanged {
+                old: vec!["--cfg".to_string(), "test".to_string()],
+                new: vec![
+                    "--cfg".to_string(),
+                    "test".to_string(),
+                    "-C".to_string(),
+                    "target-cpu=native".to_string()
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn handles_rustflags_changed_empty_vecs() {
+        let log_line = r#"dirty: RustflagsChanged { old: [], new: ["-C", "opt-level=3"] }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::RustflagsChanged {
+                old: vec![],
+                new: vec!["-C".to_string(), "opt-level=3".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn handles_features_changed() {
+        let log_line = r#"dirty: FeaturesChanged { old: "default", new: "default,serde" }"#;
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(
+            result,
+            Some(RebuildReason::FeaturesChanged {
+                old: "default".to_string(),
+                new: "default,serde".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn handles_profile_configuration_changed() {
+        let log_line = r"dirty: ProfileConfigurationChanged";
+        let result = parse_rebuild_reason(log_line);
+
+        assert_eq!(result, Some(RebuildReason::ProfileConfigurationChanged));
     }
 
     #[test]
@@ -416,17 +558,29 @@ mod tests {
 
     #[test]
     fn handles_malformed_input_gracefully() {
-        let malformed_lines = vec![
+        let lines_without_dirty = vec![r"", r"some random log line"];
+
+        for line in lines_without_dirty {
+            let result = parse_rebuild_reason(line);
+            assert_eq!(
+                result, None,
+                "Expected None for line without dirty marker: {line}"
+            );
+        }
+
+        let malformed_with_dirty = vec![
             r#"dirty: EnvVarChanged { name: "CC", old_value: Some("gcc")"#,
             r#"dirty: EnvVarChanged { name: CC", old_value: Some("gcc"), new_value: None }"#,
             r#"dirty: UnitDependencyInfoChanged { old_name: "rusqlite""#,
             r"dirty:",
-            r"",
         ];
 
-        for line in malformed_lines {
+        for line in malformed_with_dirty {
             let result = parse_rebuild_reason(line);
-            assert_eq!(result, None, "Expected None for malformed line: {line}");
+            assert!(
+                matches!(result, Some(RebuildReason::Unknown(_))),
+                "Expected Unknown for malformed dirty line: {line}"
+            );
         }
     }
 }
