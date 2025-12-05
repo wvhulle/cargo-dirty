@@ -91,7 +91,7 @@ fn detects_rebuilds_when_environment_variables_change() {
         .env_remove("CUSTOM_VAR");
     let _ = cmd2.assert();
 
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-frequent"));
     cmd.arg("--path")
         .arg(project.path())
         .arg("--command")
@@ -99,10 +99,10 @@ fn detects_rebuilds_when_environment_variables_change() {
         .env("CUSTOM_VAR", "test_value");
 
     let output = cmd.assert().success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(
-        stderr.contains("env:CUSTOM_VAR"),
-        "Expected stderr to contain 'env:CUSTOM_VAR', got: {stderr}"
+        stdout.contains("env:CUSTOM_VAR"),
+        "Expected stdout to contain 'env:CUSTOM_VAR', got: {stdout}"
     );
 }
 
@@ -120,7 +120,7 @@ fn detects_rebuilds_when_c_compiler_environment_changes() {
         .env("CC", "gcc");
     let _ = cmd2.assert();
 
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-frequent"));
     cmd.arg("--path")
         .arg(project.path())
         .arg("--command")
@@ -128,10 +128,10 @@ fn detects_rebuilds_when_c_compiler_environment_changes() {
         .env("CC", "clang");
 
     let output = cmd.assert().success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(
-        stderr.contains("env:CC"),
-        "Expected stderr to contain 'env:CC', got: {stderr}"
+        stdout.contains("env:CC"),
+        "Expected stdout to contain 'env:CC', got: {stdout}"
     );
 }
 
@@ -168,16 +168,16 @@ fn main() {
     )
     .unwrap();
 
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-frequent"));
     cmd.arg("--path")
         .arg(project.path())
         .arg("--command")
         .arg("build");
 
     let output = cmd.assert().success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(
-        stderr.contains("file:") && stderr.contains("main.rs"),
-        "Expected stderr to contain 'file:' and 'main.rs', got: {stderr}"
+        stdout.contains("file:") && stdout.contains("main.rs"),
+        "Expected stdout to contain 'file:' and 'main.rs', got: {stdout}"
     );
 }

@@ -36,7 +36,7 @@ pub struct Config {
 impl Config {
     #[must_use]
     pub fn parse_args() -> Self {
-        if env::args().nth(1).as_deref() == Some("dirty") {
+        if env::args().nth(1).as_deref() == Some("frequent") {
             Self::parse_from(env::args().take(1).chain(env::args().skip(2)))
         } else {
             Self::parse()
@@ -69,9 +69,11 @@ impl Config {
             return Err(AnalyzerError::CargoTomlNotFound(cargo_toml));
         }
 
-        info!("Analyzing cargo project at: {}", self.path.display());
-        eprintln!("Analyzing: {}", self.path.display());
-        eprintln!("Running: cargo {cargo_command}");
+        info!(
+            "Analyzing output of `cargo {}` on project {}",
+            cargo_command,
+            self.path.display()
+        );
 
         let args: Vec<&str> = cargo_command.split_whitespace().collect();
         let (cmd, cmd_args) = args.split_first().ok_or(AnalyzerError::EmptyCommand)?;
@@ -120,16 +122,16 @@ impl Config {
             let root_causes = graph.root_causes();
 
             if root_causes.is_empty() {
-                eprintln!("No rebuild triggers detected.");
+                println!("No rebuild triggers detected.");
             } else {
-                eprintln!(
+                println!(
                     "\n{} root cause{}:",
                     root_causes.len(),
                     if root_causes.len() == 1 { "" } else { "s" }
                 );
 
                 for root in &root_causes {
-                    eprintln!("  {} {}", root.package, root.reason);
+                    println!("  {} {}", root.package, root.reason);
                 }
             }
         }

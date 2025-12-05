@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use cargo_dirty::Config;
+use cargo_frequent::Config;
 
 fn main() -> ExitCode {
     let cli = Config::parse_args();

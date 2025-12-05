@@ -1,4 +1,4 @@
-//! # cargo-dirty
+//! # cargo-frequent
 //!
 //! A tool to analyze what causes cargo rebuilds by parsing cargo's fingerprint
 //! logs and providing detailed explanations and actionable suggestions.

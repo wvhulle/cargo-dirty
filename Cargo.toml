@@ -1,12 +1,12 @@
 [package]
 authors = ["Willem Vanhulle <willemvanhulle@protonmail.com>"]
-description = "A tool to analyze why Cargo rebuilds your project often."
+description = "Find the cause of frequent Cargo rebuilds"
 edition = "2024"
 keywords = ["compilation", "cargo", "fingerprint", "helper", "tool"]
 license = "MIT"
-name = "cargo-dirty"
-repository = "https://github.com/wvhulle/cargo-dirty"
-version = "0.0.4"
+name = "cargo-frequent"
+repository = "https://github.com/wvhulle/cargo-frequent"
+version = "0.0.1"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }

@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 #[test]
 fn cli_reports_error_for_invalid_project_path() {
-    let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+    let mut cmd = Command::new(cargo::cargo_bin!("cargo-frequent"));
     cmd.arg("--path").arg("/nonexistent/path");
 
     let output = cmd.assert().failure();
@@ -37,16 +37,16 @@ edition = "2021"
     fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
 
     for command in &["check", "build", "test"] {
-        let mut cmd = Command::new(cargo::cargo_bin!("cargo-dirty"));
+        let mut cmd = Command::new(cargo::cargo_bin!("cargo-frequent"));
         cmd.arg("--path").arg(temp_dir.path());
         cmd.arg("--command").arg(command);
 
         let output = cmd.assert().success();
-        let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-        let expected = format!("Running: cargo {command}");
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let expected = format!("cargo {command}");
         assert!(
-            stderr.contains(&expected),
-            "Expected stderr to contain '{expected}', got: {stderr}"
+            stdout.contains(&expected),
+            "Expected stderr to contain '{expected}', got: {stdout}"
         );
     }
 }
